@@ -72,6 +72,15 @@ struct A64JitState {
     u64 host_stack_limit = 0;  // a call below this drops all frames
     u8 check_bit = 0;
 
+    // UserConfig::core_independent_code: per-Jit values code reads at run time (set by the Jit).
+    void* callbacks = nullptr;              // UserConfig::callbacks
+    const void* user_config = nullptr;      // the Jit's UserConfig
+    const u64* tpidrro_el0 = nullptr;       // UserConfig::tpidrro_el0
+    u64* tpidr_el0 = nullptr;               // UserConfig::tpidr_el0
+    u64* exclusive_address_slot = nullptr;  // this processor's slots in the global monitor
+    void* exclusive_value_slot = nullptr;
+    u64* inline_cntpct_last = nullptr;      // UserConfig::inline_cntpct_last
+
     u32 GetPstate() const {
         return NZCV::FromX64(cpsr_nzcv);
     }

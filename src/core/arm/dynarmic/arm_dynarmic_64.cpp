@@ -557,6 +557,9 @@ void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t address_s
         // address: the CPU's return predictor predicts guest returns instead of one shared
         // indirect jump through the return stack buffer (multicore only, no cycle counter).
         config.host_call_return = !config.enable_cycle_counting;
+        // Code reads the per-core callbacks, TPIDR pointers and monitor slots from the JIT state,
+        // so one compiled block is valid on every core (for one code cache per process).
+        config.core_independent_code = true;
     }
 #endif
     m_jit.emplace(config);
