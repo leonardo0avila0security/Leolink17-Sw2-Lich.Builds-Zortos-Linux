@@ -133,6 +133,7 @@ add_library(dynarmic STATIC
     frontend/A64/translate/a64_translate.cpp
     frontend/A64/translate/a64_translate.h
     interface/A64/a64.h
+    interface/A64/code_image.h
     interface/A64/config.h
 )
 
@@ -151,6 +152,8 @@ if ("x86_64" IN_LIST ARCHITECTURE)
         backend/x64/block_of_code.h
         backend/x64/callback.cpp
         backend/x64/callback.h
+        backend/x64/code_image.cpp
+        backend/x64/code_image.h
         backend/x64/constant_pool.cpp
         backend/x64/constant_pool.h
         backend/x64/constants.h

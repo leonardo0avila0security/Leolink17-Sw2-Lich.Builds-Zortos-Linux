@@ -20,6 +20,7 @@
 #include "dynarmic/backend/x64/a64_emit_x64.h"
 #include "dynarmic/backend/x64/a64_jitstate.h"
 #include "dynarmic/backend/x64/block_of_code.h"
+#include "dynarmic/backend/x64/code_image.h"
 #include "dynarmic/backend/x64/devirtualize.h"
 #include "dynarmic/backend/x64/exclusive_monitor_friend.h"
 #include "dynarmic/backend/x64/jitstate_info.h"
@@ -89,6 +90,10 @@ public:
     {
         ASSERT(conf.page_table_address_space_bits >= 12 && conf.page_table_address_space_bits <= 64);
         SetJitStatePointers();
+        // Code without per-Jit pointers only: otherwise the option is ignored.
+        if (conf.code_image && conf.core_independent_code) {
+            code_image_link.emplace(conf.code_image, this->conf, block_of_code, emitter);
+        }
     }
 
     // The per-Jit values that core-independent code reads through the JIT state.
@@ -302,6 +307,12 @@ private:
         }
         block_of_code.EnsureMemoryCommitted(MINIMUM_REMAINING_CODESIZE);
 
+        if (code_image_link) {
+            if (const auto installed = code_image_link->TryLoad(descriptor)) {
+                return *installed;
+            }
+        }
+
         // JIT Compile
         const auto get_code = [this](u64 vaddr) { return conf.callbacks->MemoryReadCode(vaddr); };
         // LocationDescriptor ctor() does important ops (like tflags) do not skip
@@ -312,7 +323,14 @@ private:
         if (conf.counters) {
             ++conf.counters->blocks_compiled;
         }
-        return emitter.Emit(ir_block).entrypoint;
+        BlockCapture capture;
+        emitter.block_capture = code_image_link ? &capture : nullptr;
+        const auto emitted = emitter.Emit(ir_block);
+        emitter.block_capture = nullptr;
+        if (code_image_link) {
+            code_image_link->Record(ir_block, emitted.entrypoint, emitted.size, capture);
+        }
+        return emitted.entrypoint;
     }
 
     void PerformRequestedCacheInvalidation(HaltReason hr) {
@@ -346,6 +364,7 @@ private:
     BlockOfCode block_of_code;
     A64EmitX64 emitter;
     Optimization::PolyfillOptions polyfill_options;
+    std::optional<CodeImageLink> code_image_link;
     bool is_executing = false;
     bool invalidate_entire_cache = false;
     boost::icl::interval_set<u64> invalid_cache_ranges;
