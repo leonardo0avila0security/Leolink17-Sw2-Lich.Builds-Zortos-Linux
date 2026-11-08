@@ -391,6 +391,9 @@ void EmitX64::AddPatchLocation(const IR::LocationDescriptor& target_desc, PatchK
     const size_t offset = code.getCurr<const u8*>() - static_cast<const u8*>(code.getCode());
     ASSERT(offset > 0 && offset < (size_t(1) << 30));
     const u32 entry = u32(offset << 2) | u32(kind);
+    if (block_capture) {
+        block_capture->patch_sites.push_back({target_desc.Value(), kind, code.getCurr<const u8*>()});
+    }
     PatchInformation& patch_info = patch_information[target_desc];
     for (u32& slot : patch_info.first) {
         if (slot == 0) {

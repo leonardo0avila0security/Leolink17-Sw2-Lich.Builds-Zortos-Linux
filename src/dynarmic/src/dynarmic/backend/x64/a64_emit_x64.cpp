@@ -256,12 +256,18 @@ finish_this_inst:
     const bool far_code = code.HasFarCode();
     if (far_code) {
         code.SwitchToFarCode();
+        if (block_capture) {
+            block_capture->far_begin = code.getCurr<const u8*>();
+        }
     }
     FlushPendingExitStubs();
     emitting_block = false;
     for (auto& deferred_emit : ctx.far_deferred_emits)
         deferred_emit();
     if (far_code) {
+        if (block_capture) {
+            block_capture->far_end = code.getCurr<const u8*>();
+        }
         code.SwitchToNearCode();
     }
     for (auto& deferred_emit : ctx.deferred_emits)
@@ -285,6 +291,7 @@ finish_this_inst:
 void A64EmitX64::ClearCache() {
     EmitX64::ClearCache();
     exit_stubs.clear();
+    exit_stub_targets.clear();
     pending_exit_stubs.clear();
     block_ranges.ClearCache();
     ClearFastDispatchTable();
@@ -1130,6 +1137,10 @@ void A64EmitX64::FlushPendingExitStubs() {
     for (const auto& [value, label] : pending_exit_stubs) {
         code.L(*label);
         exit_stubs[value] = code.getCurr<CodePtr>();
+        exit_stub_targets[code.getCurr<CodePtr>()] = value;
+        if (block_capture) {
+            block_capture->exit_stubs.emplace_back(value, code.getCurr<const u8*>());
+        }
         code.mov(rax, A64::LocationDescriptor{IR::LocationDescriptor{value}}.PC());
         code.mov(qword[code.ABI_JIT_PTR + offsetof(A64JitState, pc)], rax);
         code.ReturnFromRunCode();

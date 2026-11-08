@@ -187,6 +187,10 @@ BlockOfCode::BlockOfCode(RunCodeCallbacks cb, JitStateInfo jsi, size_t total_cod
     GenRunCode(rcp);
 }
 
+HostFeature BlockOfCode::HostFeatures() noexcept {
+    return features;
+}
+
 bool BlockOfCode::HasHostFeature(HostFeature feature) const noexcept {
     return (GetHostFeatures() & feature) == feature;
 }

@@ -173,6 +173,8 @@ public:
     // Compact block exits (conf.compact_block_exits): one shared unlinked-exit stub per target
     // descriptor, created while a block that links to it is emitted, and kept until ClearCache.
     ::Common::unordered_map<u64, CodePtr> exit_stubs;
+    /// exit_stubs inverted: stub -> target descriptor.
+    ::Common::unordered_map<CodePtr, u64> exit_stub_targets;
     std::vector<std::pair<u64, Xbyak::Label*>> pending_exit_stubs;
     bool emitting_block = false;
     Xbyak::Label* PendingExitStub(const IR::LocationDescriptor& target);
