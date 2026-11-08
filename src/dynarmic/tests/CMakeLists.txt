@@ -59,9 +59,13 @@ endif()
 
 if ("x86_64" IN_LIST ARCHITECTURE)
     target_link_libraries(dynarmic_tests PRIVATE xbyak::xbyak)
+    # As for dynarmic itself: Xbyak's inline functions must be compiled the same in both, or the
+    # linker can give dynarmic the tests' copies.
+    target_compile_definitions(dynarmic_tests PRIVATE XBYAK_STRICT_CHECK_MEM_REG_SIZE=0 XBYAK_OLD_DISP_CHECK=1)
     target_architecture_specific_sources(dynarmic_tests "x86_64"
         A64/emit_regressions.cpp
         x64_cpu_info.cpp
+        x64_decode.cpp
         native/preserve_xmm.cpp
     )
 
