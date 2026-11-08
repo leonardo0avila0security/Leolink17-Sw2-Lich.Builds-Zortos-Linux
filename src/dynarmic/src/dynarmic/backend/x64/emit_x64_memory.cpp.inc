@@ -103,7 +103,9 @@ void AxxEmitX64::EmitMemoryRead(AxxEmitContext& ctx, IR::Inst* inst) {
             }
             code.mov(code.ABI_PARAM3.cvt32(), bitsize / CHAR_BIT);
             if (ordered) code.mfence();
+            code.EnterHostMxcsr();
             Devirtualize<callback>(conf.callbacks).EmitCall(code);
+            code.LeaveHostMxcsr();
             code.ZeroExtendFrom(bitsize, code.ABI_RETURN);
         }
         EmitCheckMemoryAbort(ctx, inst);
@@ -210,7 +212,9 @@ void AxxEmitX64::EmitMemoryWrite(AxxEmitContext& ctx, IR::Inst* inst) {
                 code.lea(code.ABI_PARAM2, code.ptr[code.ABI_PARAM2 + FoldedDisp(*disp)]);
             }
             code.mov(code.ABI_PARAM4.cvt32(), bitsize / CHAR_BIT);
+            code.EnterHostMxcsr();
             Devirtualize<callback>(conf.callbacks).EmitCall(code);
+            code.LeaveHostMxcsr();
         }
         if (ordered) code.mfence();
         EmitCheckMemoryAbort(ctx, inst);
@@ -308,11 +312,13 @@ void AxxEmitX64::EmitExclusiveReadMemory(AxxEmitContext& ctx, IR::Inst* inst) {
         if (ordered) {
             code.mfence();
         }
+        code.EnterHostMxcsr();
         code.CallLambda([](AxxUserConfig& conf, Axx::VAddr vaddr) -> T {
             return conf.global_monitor->ReadAndMark<T>(conf.processor_id, vaddr, [&]() -> T {
                 return (conf.callbacks->*callback)(vaddr, bitsize / CHAR_BIT);
             });
         });
+        code.LeaveHostMxcsr();
         code.ZeroExtendFrom(bitsize, code.ABI_RETURN);
     } else {
         const Xbyak::Xmm result = ctx.reg_alloc.ScratchXmm(code);
@@ -327,11 +333,13 @@ void AxxEmitX64::EmitExclusiveReadMemory(AxxEmitContext& ctx, IR::Inst* inst) {
         if (ordered) {
             code.mfence();
         }
+        code.EnterHostMxcsr();
         code.CallLambda([](AxxUserConfig& conf, Axx::VAddr vaddr, Vector& ret) {
             ret = conf.global_monitor->ReadAndMark<Vector>(conf.processor_id, vaddr, [&]() -> Vector {
                 return (conf.callbacks->*callback)(vaddr);
             });
         });
+        code.LeaveHostMxcsr();
         code.movups(result, xword[rsp + ABI_SHADOW_SPACE]);
         ctx.reg_alloc.ReleaseStackSpace(code, 16 + ABI_SHADOW_SPACE);
 
@@ -367,11 +375,13 @@ void AxxEmitX64::EmitExclusiveWriteMemory(AxxEmitContext& ctx, IR::Inst* inst) {
     code.mov(code.ABI_PARAM1, u64(&conf));
     if constexpr (bitsize != 128) {
         using T = mcl::unsigned_integer_of_size<bitsize>;
+        code.EnterHostMxcsr();
         code.CallLambda([](AxxUserConfig& conf, Axx::VAddr vaddr, T value) -> u32 {
             return conf.global_monitor->DoExclusiveOperation<T>(conf.processor_id, vaddr, [&](T expected) -> bool {
                 return (conf.callbacks->*callback)(vaddr, value, expected);
             }) ? 0 : 1;
         });
+        code.LeaveHostMxcsr();
         if (ordered) {
             code.mfence();
         }
@@ -379,11 +389,13 @@ void AxxEmitX64::EmitExclusiveWriteMemory(AxxEmitContext& ctx, IR::Inst* inst) {
         ctx.reg_alloc.AllocStackSpace(code, 16 + ABI_SHADOW_SPACE);
         code.lea(code.ABI_PARAM3, ptr[rsp + ABI_SHADOW_SPACE]);
         code.movaps(xword[code.ABI_PARAM3], xmm1);
+        code.EnterHostMxcsr();
         code.CallLambda([](AxxUserConfig& conf, Axx::VAddr vaddr, Vector& value) -> u32 {
             return conf.global_monitor->DoExclusiveOperation<Vector>(conf.processor_id, vaddr, [&](Vector expected) -> bool {
                 return (conf.callbacks->*callback)(vaddr, value, expected);
             }) ? 0 : 1;
         });
+        code.LeaveHostMxcsr();
         if (ordered) {
             code.mfence();
         }
