@@ -56,6 +56,8 @@ public:
     /// Emit host machine code for a basic block with intermediate representation `block`.
     /// @note block is modified.
     BlockDescriptor Emit(IR::Block& block) noexcept;
+    /// Emit's work; may throw Xbyak::Error, which Emit reports with the block's PC.
+    BlockDescriptor EmitBlock(IR::Block& block);
 
     void ClearCache() override;
 

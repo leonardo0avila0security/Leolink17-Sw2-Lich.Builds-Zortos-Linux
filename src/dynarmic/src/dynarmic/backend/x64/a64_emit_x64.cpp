@@ -10,6 +10,8 @@
 #include "dynarmic/backend/x64/a64_emit_x64.h"
 
 #include <algorithm>
+#include <exception>
+#include <bit>
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 #include "common/assert.h"
@@ -87,6 +89,20 @@ A64EmitX64::A64EmitX64(BlockOfCode& code, A64::UserConfig conf, A64::Jit* jit_in
 A64EmitX64::~A64EmitX64() = default;
 
 A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) noexcept {
+    // An Xbyak error (code buffer overrun, a jump out of range, a bad operand) must not end the
+    // process silently through std::terminate: say which block and which error.
+    try {
+        return EmitBlock(block);
+    } catch (const Xbyak::Error& e) {
+        UNREACHABLE_MSG("dynarmic: emitting the A64 block at {:#x} (location {:#x}) failed: Xbyak error {} ({})",
+                        A64::LocationDescriptor{block.Location()}.PC(), block.Location().Value(), int(e), e.what());
+    } catch (const std::exception& e) {
+        UNREACHABLE_MSG("dynarmic: emitting the A64 block at {:#x} (location {:#x}) failed: {}",
+                        A64::LocationDescriptor{block.Location()}.PC(), block.Location().Value(), e.what());
+    }
+}
+
+A64EmitX64::BlockDescriptor A64EmitX64::EmitBlock(IR::Block& block) {
     if (conf.very_verbose_debugging_output) [[unlikely]] {
         std::puts(IR::DumpBlock(block).c_str());
     }
