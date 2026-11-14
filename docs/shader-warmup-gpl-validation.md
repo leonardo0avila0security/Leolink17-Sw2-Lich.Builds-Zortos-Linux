@@ -183,6 +183,8 @@ Adaptations for current nx2:
 Validation on the same RX 6650 XT / RADV 26.2.6:
 
 - Build: `lichii-cmd` compiles on current nx2 (GPL + graphics warm-up).
+- Final branch merged current `nx2` `642eace1b7`; `lichii` and `lichii-cmd` build.
+- Tests: `tests "ShaderPrecache*"` passes (17 test cases, 159 assertions).
 - Builder: 4.794 compute, 22.599 vertex, 37.430 fragment entries in 5,3 s.
 - Cold warm-up: 4.794 compute + 60.029 graphics, **0 failed**, graphics part
   **582,3 s** (~9,7 min); `warm-compute.done` and `warm-graphics.done` written.
