@@ -2,21 +2,22 @@
 
 Date: 2026-11-14
 
-This branch is a **validation roll-up** of the graphics warm-up work:
+This branch ports the graphics warm-up work to current `nx2` (`ffbe52d0a4`):
 
-- Open PR #1177: `VK_EXT_graphics_pipeline_library` shader libraries.
-- Closed PR #1183: graphics warm-up from the game files (`warm-graphics.bin`).
+- PR #1177: `VK_EXT_graphics_pipeline_library` shader libraries.
+- PR #1183: graphics warm-up from the game files (`warm-graphics.bin`).
 - Related: #579, #741, #1166, #1178, #601, #899.
 
-It is based on build 177 (`87d84d5`). Current `nx2` has moved past that
-(`#1619` removed the graphics precache list, `#1620` replaced the precache
-marker with a content hash + variant), so this branch **is not ready to merge
-as-is**. It is published with the test results below so the work can be ported
-to current `nx2` without repeating the measurements.
+The original measurements were taken on build 177 (`87d84d5`). The branch has
+since been ported to current `nx2`: the precache marker now uses the current
+content hash + variant fields (graphics mode folded into
+`GraphicsWarmVariant()`), the graphics precache list removed by #1619 is not
+used, and `WarmBuilderVersion` is 4. The port builds `lichii` and `lichii-cmd`
+and passed a cold warm-up run on the same system (see "Current nx2 port" below).
 
 The code changes in this branch are from PantACRO4life's #1177/#1183 branches
-and their contributors. The validation measurements and this document are by
-TuxArchi.
+and their contributors. The port, validation measurements and this document are
+by TuxArchi.
 
 ## Test system
 
@@ -24,7 +25,7 @@ TuxArchi.
 - CPU / RAM: Ryzen 7 5800X / 32 GB
 - OS: Arch Linux, kernel 7.2.14
 - Driver: RADV / Mesa 26.2.6, Vulkan 1.4.354
-- Emulator: Lichii build 177 (`87d84d5`) + this branch
+- Emulator: Lichii `nx2` (`ffbe52d0a4`) + this branch; original figures on build 177
 
 ## Configuration
 
@@ -134,10 +135,10 @@ no `VK_ERROR_DEVICE_LOST`, and no `amdgpu` page fault/ring timeout.
   reused.
 - The first cold warm-up is long (~10 min) and writes ~1.5 GB for
   `warm-graphics.bin` plus ~575 MB in the driver pipeline cache.
-- This branch is based on build 177 and conflicts with current `nx2` in the
-  marker/variant code (#1619/#1620). Porting it means folding the graphics
-  marker version/mode into the current variant and bumping the builder version
-  so #1577's stale-precache check sees `warm-graphics.bin`.
+- The branch is now ported to current `nx2`: the graphics marker mode is folded
+  into the current variant, the precache list removed by #1619 is not used, and
+  `WarmBuilderVersion` is 4 so #1577's stale-precache check rebuilds an existing
+  compute-only precache once.
 - Tested on one GPU/driver only; more AMD series and Windows results are needed.
 
 ## Reproduce
