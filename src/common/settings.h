@@ -705,8 +705,22 @@ struct Values {
     SwitchableSetting<bool> use_graphics_pipeline_library{
         linkage, false, "use_graphics_pipeline_library", Category::RendererAdvanced};
 
-    // Precache shaders before the game starts: the compute programs in the game files are built on
-    // the loading screen, so the driver's cache holds them before the game first uses them.
+    // Threads that build the graphics programs of the game files in the shader precache on the
+    // loading screen (graphics pipeline libraries), 0 for every CPU thread. The cached pipelines
+    // and compute programs before them use the shader job workers.
+    SwitchableSetting<u32, true> shader_warm_threads{linkage,
+                                                     0,
+                                                     0,
+                                                     64,
+                                                     "shader_warm_threads",
+                                                     Category::RendererAdvanced,
+                                                     Specialization::Countable,
+                                                     true,
+                                                     true};
+
+    // Precache shaders before the game starts: the compute programs in the game files and the
+    // graphics programs of the game files (with Shader libraries) are built on the loading screen,
+    // so the driver's cache holds them before the game first uses them.
     // Ask: the desktop app asks at launch while the game has no finished precache; where nothing
     // asks, as Off.
     SwitchableSetting<PrecacheShaders> precache_shaders{linkage,

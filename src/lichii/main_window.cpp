@@ -4783,8 +4783,19 @@ void MainWindow::PrepareShaderPrecache(u64 title_id, const std::filesystem::path
         return;
     }
     const auto warm_file = ShaderWarm::ComputeWarmPath(title_id);
-    const auto stale = ShaderWarm::WarmFilesStale(warm_file);
-    const bool pending = ShaderWarm::WarmPending(title_id);
+    const auto graphics_warm_file = ShaderWarm::GraphicsWarmPath(title_id);
+    const bool use_libraries = Settings::values.use_graphics_pipeline_library.GetValue();
+    auto stale = ShaderWarm::WarmFilesStale(warm_file);
+    bool pending = ShaderWarm::WarmPending(title_id);
+    if (use_libraries) {
+        if (!std::filesystem::exists(graphics_warm_file) ||
+            !std::filesystem::exists(ShaderWarm::WarmMarkerPath(graphics_warm_file))) {
+            pending = true;
+        }
+        if (const auto graphics_stale = ShaderWarm::WarmFilesStale(graphics_warm_file)) {
+            stale = graphics_stale;
+        }
+    }
     if (!pending && !stale) {
         // Precached before: the renderer runs it again only when the driver or the file changed.
         ShaderWarm::RequestWarmBeforeStart(true);
