@@ -2388,6 +2388,12 @@ void RasterizerVulkan::DispatchCompute() {
         }
     };
     const auto indirect_address = kepler_compute->GetIndirectComputeAddress();
+    // The full-size 1080p pass is replaced by FSR/XeSS (native AA); DLAA through it is untested.
+    const bool can_replace = OcarinaTemporalEnabled() && pipeline->CanReplaceOcarinaUpscale() &&
+                             (pipeline->ShaderHash() != ComputePipeline::OcarinaFullSizeShader ||
+                              oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+                              oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess) &&
+                             !indirect_address && !frame_dump.Capturing();
     const auto list_slot = kepler_compute->GetIndirectListSlot();
     // The full-size 1080p pass is replaced only by FSR (native AA); DLAA through it is untested.
     const bool can_replace = OcarinaTemporalEnabled() && pipeline->CanReplaceOcarinaUpscale() &&
@@ -3422,19 +3428,22 @@ void RasterizerVulkan::TrackOcarinaCamera() {
 
 void RasterizerVulkan::UpdateOcarinaJitter() {
     std::array<f32, 2> want{};
-    // Only while FSR replaced the previous frame's upscale: a frame the game upscales itself
+    // Only while FSR or XeSS replaced the previous frame's upscale: a frame the game upscales itself
     // would show the offset as a shake. Only draws that depth-test against the scene depth at
     // the scene size, so a depth pre-pass and the colour passes move together; shadow maps,
     // half-size passes and full-screen passes (which keep the depth bound without using it, as
     // #678 found, some with depth writes on: with the test off nothing writes depth) stay put.
     const auto& regs = maxwell3d->regs;
-    if (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr && oot_motion.extent.width != 0 &&
+    if ((oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+         oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess) &&
+        oot_motion.extent.width != 0 &&
         oot_dlss_frame && *oot_dlss_frame + 1 >= render_trace_frame && regs.depth_test_enable) {
         const auto& targets = texture_cache.GetRenderTargets();
         if (targets.depth_buffer_id) {
             const auto& depth = texture_cache.GetImageView(targets.depth_buffer_id);
             if (depth.size.width == oot_motion.extent.width &&
                 depth.size.height == oot_motion.extent.height && !depth.IsRescaled()) {
+                // Halton (2, 3) with the temporal upscaler's phase count for the prior frame's scale.
                 // AMD's phase count for the last FSR frame's scale.
                 const u32 index = static_cast<u32>(render_trace_frame % oot_jitter_phases) + 1;
                 const auto driver = device.GetDriverID();
