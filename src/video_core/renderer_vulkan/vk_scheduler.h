@@ -52,6 +52,12 @@ struct QueryCacheParams;
 /// OpenGL-like operations on Vulkan command buffers.
 class Scheduler {
 public:
+    /// Whether every submission ends with a host read barrier, so a host-visible buffer can be
+    /// read once the submission that last wrote it completes.
+    [[nodiscard]] bool HostReadsMappedBuffers() const noexcept {
+        return host_reads_mapped_buffers;
+    }
+
     explicit Scheduler(const Device& device, StateTracker& state_tracker);
     ~Scheduler();
 
@@ -508,6 +514,8 @@ private:
 
     const Device& device;
     StateTracker& state_tracker;
+    /// Buffer cache buffers are host-visible: every submission ends with a host read barrier.
+    const bool host_reads_mapped_buffers;
 
     std::unique_ptr<MasterSemaphore> master_semaphore;
     FragmentBarrierState fragment_barrier;

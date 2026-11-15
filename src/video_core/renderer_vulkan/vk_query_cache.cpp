@@ -1812,6 +1812,8 @@ void QueryCacheRuntime::SyncValues(std::span<SyncValuesType> values, VkBuffer ba
             const auto [buffer, offset] = impl->buffer_cache.ObtainCPUBuffer(
                 pair.first, static_cast<u32>(pair.second - pair.first), sync_info, post_op);
             impl->buffers_to_upload_to.emplace_back(buffer->Handle(), offset);
+            // The copies below go in the current submission: a mapped read waits for it.
+            buffer->SetGpuWriteTick(impl->scheduler.CurrentTick());
         }
     });
     // The copies below are GPU writes the buffer cache doesn't record: reads taken before them

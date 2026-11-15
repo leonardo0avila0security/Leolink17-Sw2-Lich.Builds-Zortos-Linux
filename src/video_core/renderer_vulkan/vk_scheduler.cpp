@@ -112,6 +112,7 @@ void Scheduler::CommandChunk::ExecuteAll(vk::CommandBuffer cmdbuf,
 
 Scheduler::Scheduler(const Device& device_, StateTracker& state_tracker_)
     : device{device_}, state_tracker{state_tracker_},
+      host_reads_mapped_buffers{device_.IsIntegrated() && !device_.IsMoltenVK()},
       master_semaphore{std::make_unique<MasterSemaphore>(device)},
       command_pool{std::make_unique<CommandPool>(*master_semaphore, device)},
       upload_batch{std::make_unique<UploadBatch>()} {
@@ -1061,6 +1062,18 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
         }
         if (trace_work_pool) {
             trace_work = {};
+        }
+        if (host_reads_mapped_buffers) {
+            // The buffer cache reads GPU-written buffers straight from their memory once the
+            // writing submission completes (BufferCacheRuntime::WaitForMappedRead).
+            static constexpr VkMemoryBarrier HOST_READ_BARRIER{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            };
+            cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                                   0, HOST_READ_BARRIER);
         }
         cmdbuf.End();
 

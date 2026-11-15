@@ -153,6 +153,10 @@ public:
     /// Waits for a SubmitForHostRead or QueueForHostRead tick, on any thread.
     void WaitForHostRead(u64 tick);
 
+    /// Waits until the host may read a host-visible buffer last written by the GPU at
+    /// `write_tick`, or for all work when submissions don't end with a host read barrier.
+    void WaitForMappedRead(u64 write_tick);
+
     /// Whether the host GPU completed `tick`, asking it when the tick is submitted but not known
     /// to be done.
     [[nodiscard]] bool IsFreeNow(u64 tick);

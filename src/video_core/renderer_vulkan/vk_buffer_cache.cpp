@@ -104,8 +104,12 @@ vk::Buffer CreateBuffer(const Device& device, const MemoryAllocator& memory_allo
     if (sparse_alignment > 1) {
         return memory_allocator.CreateBuffer(buffer_ci, MemoryUsage::DeviceLocal, sparse_alignment);
     }
+    // On unified memory the buffers are host-visible: a CPU access to GPU-written bytes reads them
+    // once the submission that wrote them completed, instead of copying them behind all queued
+    // work and waiting for the whole queue (Ocarina of Time on Adreno: ~30 such waits a second).
     return memory_allocator.CreateBuffer(
-        buffer_ci, device.IsMoltenVK() ? MemoryUsage::Stream : MemoryUsage::DeviceLocal);
+        buffer_ci, device.IsMoltenVK() || device.IsIntegrated() ? MemoryUsage::Stream
+                                                                : MemoryUsage::DeviceLocal);
 }
 } // Anonymous namespace
 
@@ -549,6 +553,15 @@ u64 BufferCacheRuntime::QueueForHostRead() {
         scheduler.Flush();
     }
     return tick;
+}
+
+void BufferCacheRuntime::WaitForMappedRead(u64 write_tick) {
+    if (!scheduler.HostReadsMappedBuffers() || write_tick == 0) {
+        FinishForHostRead();
+        return;
+    }
+    // Every submission ends with a host read barrier (Scheduler::SubmitExecution).
+    WaitForHostRead(write_tick);
 }
 
 void BufferCacheRuntime::WaitForHostRead(u64 tick) {

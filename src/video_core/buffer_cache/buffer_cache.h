@@ -1509,6 +1509,9 @@ bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 am
     src_buffer.MarkUsage(copy.src_offset, copy.size);
     dest_buffer.MarkUsage(copy.dst_offset, copy.size);
     runtime.CopyBuffer(dest_buffer, src_buffer, copies, true);
+    if constexpr (!IS_OPENGL) {
+        dest_buffer.SetGpuWriteTick(runtime.CurrentTick());
+    }
     if (has_new_downloads) {
         memory_tracker.MarkRegionAsGpuModified(*cpu_dest_address, amount);
         const bool should_sync = Settings::IsGPUFenceBehaviorBalanced() || Settings::IsGPUFenceBehaviorAccurate();
@@ -1546,6 +1549,9 @@ bool BufferCache<P>::DMAClear(GPUVAddr dst_address, u64 amount, u32 value) {
     SynchronizeBuffer(dest_buffer, *cpu_dst_address, static_cast<u32>(size));
     const u32 offset = dest_buffer.Offset(*cpu_dst_address);
     runtime.ClearBuffer(dest_buffer, offset, size, value);
+    if constexpr (!IS_OPENGL) {
+        dest_buffer.SetGpuWriteTick(runtime.CurrentTick());
+    }
     dest_buffer.MarkUsage(offset, size);
     if (Tegra::g_nx2_ampere.load(std::memory_order_relaxed)) {
         Nx2NoteListWrite(buffer, *cpu_dst_address, size);
@@ -3295,10 +3301,11 @@ void BufferCache<P>::UpdateComputeTextureBuffers() {
 template <class P>
 void BufferCache<P>::MarkWrittenBuffer(BufferId buffer_id, DAddr device_addr, u32 size, bool needs_sync) {
     if constexpr (!IS_OPENGL) {
+        Buffer& buffer = slot_buffers[buffer_id];
         if (needs_sync) {
-            Buffer& buffer = slot_buffers[buffer_id];
             buffer.setWriteTick(runtime.CurrentTick());
         }
+        buffer.SetGpuWriteTick(runtime.CurrentTick());
     }
     Nx2WidenOverOwed(slot_buffers[buffer_id], device_addr, size);
     Nx2ForgetOwed(device_addr, size);
@@ -3726,6 +3733,9 @@ void BufferCache<P>::JoinOverlap(BufferId new_buffer_id, BufferId overlap_id,
     });
     new_buffer.MarkUsage(copies[0].dst_offset, copies[0].size);
     runtime.CopyBuffer(new_buffer, overlap, copies, true);
+    if constexpr (!IS_OPENGL) {
+        new_buffer.SetGpuWriteTick(runtime.CurrentTick());
+    }
 #ifdef LICHII_LEGACY
     if (immediately_free)
         runtime.Finish();
@@ -3773,6 +3783,9 @@ BufferId BufferCache<P>::CreateBuffer(DAddr device_addr, u32 wanted_size, bool s
     auto& new_buffer = slot_buffers[new_buffer_id];
     const size_t size_bytes = new_buffer.SizeBytes();
     runtime.ClearBuffer(new_buffer, 0, size_bytes, 0);
+    if constexpr (!IS_OPENGL) {
+        new_buffer.SetGpuWriteTick(runtime.CurrentTick());
+    }
     new_buffer.MarkUsage(0, size_bytes);
     for (const BufferId overlap_id : overlap.ids) {
         JoinOverlap(new_buffer_id, overlap_id, !overlap.has_stream_leap);
@@ -4164,7 +4177,11 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
 
     if constexpr (requires { buffer.Mapped(); }) {
         if (const auto mapped = buffer.Mapped(); !mapped.empty()) {
-            runtime.FinishForHostRead();
+            if constexpr (requires { runtime.WaitForMappedRead(u64{}); }) {
+                runtime.WaitForMappedRead(buffer.GpuWriteTick());
+            } else {
+                runtime.FinishForHostRead();
+            }
             const VideoCore::DownloadLanding landing{landing_begin, landing_end};
             const Common::RangeSet<DAddr> cpu_written = PendingCpuWriteRanges();
             for (const BufferCopy& copy : copies) {
