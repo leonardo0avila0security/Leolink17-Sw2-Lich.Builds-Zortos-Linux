@@ -1,0 +1,188 @@
+# Graphics shader warm-up + GPL validation (RDNA2 / RADV)
+
+Date: 2026-11-14
+
+This branch ports the graphics warm-up work to current `nx2` (`ffbe52d0a4`):
+
+- PR #1177: `VK_EXT_graphics_pipeline_library` shader libraries.
+- PR #1183: graphics warm-up from the game files (`warm-graphics.bin`).
+- Related: #579, #741, #1166, #1178, #601, #899.
+
+The original measurements were taken on build 177 (`87d84d5`). The branch has
+since been ported to current `nx2`: the precache marker now uses the current
+content hash + variant fields (graphics mode folded into
+`GraphicsWarmVariant()`), the graphics precache list removed by #1619 is not
+used, and `WarmBuilderVersion` is 4. The port builds `lichii` and `lichii-cmd`
+and passed a cold warm-up run on the same system (see "Current nx2 port" below).
+
+The code changes in this branch are from PantACRO4life's #1177/#1183 branches
+and their contributors. The port, validation measurements and this document are
+by TuxArchi.
+
+## Test system
+
+- GPU: AMD Radeon RX 6650 XT (Navi 23, RDNA2, 8 GB)
+- CPU / RAM: Ryzen 7 5800X / 32 GB
+- OS: Arch Linux, kernel 7.2.14
+- Driver: RADV / Mesa 26.2.6, Vulkan 1.4.354
+- Emulator: Lichii `nx2` (`ffbe52d0a4`) + this branch; original figures on build 177
+
+## Configuration
+
+```ini
+precache_shaders=2                 # Always
+build_all_cached_shaders=true
+native_async_draws=1               # Bounded
+use_graphics_pipeline_library=true
+shader_warm_threads=0              # every CPU thread
+```
+
+No environment variable is needed on RADV RDNA2: `nx2` picks the mesh compute
+fallback from the driver by itself (#1732, `6b726533b4`), so the measurements
+below were taken with that automatic choice and match a forced
+`EDEN_NX2_FORCE_MESH_FALLBACK=1` run.
+
+The log confirms:
+
+```text
+Nx2Perf gpl: graphics pipeline libraries on (fast linking)
+```
+
+## Results
+
+### Builder
+
+`Build Shader Precache` / `--build-warm` writes `warm-compute.bin` and
+`warm-graphics.bin` from the user's own copy of the game in about 4 seconds.
+
+```text
+4794 compute, 22599 vertex, 37430 fragment entries, 51 programs skipped,
+0 archive and 17456 member errors, 4.2 s
+```
+
+- `warm-graphics.bin`: 60,029 entries, 1,524,288,708 bytes (1.5 GB)
+- `warm-compute.bin`: 4,794 entries, ~69 MB
+
+### First warm-up (cold Lichii caches)
+
+```text
+Shader precache: 0 cached graphics pipelines and 4649 of 4794 compute programs
+Shader precache: finished, 4649 built, 0 failed, 0 not reached, 145.6 s
+Shader precache: graphics programs ... on 16 threads
+Shader precache: graphics programs finished, 60029 built, 0 failed, ... 444.7 s
+```
+
+- Compute: 145.6 s
+- Graphics: 444.7 s (7.4 min)
+- Total: ~9.8 min
+- 0 failed, 0 skipped
+- `warm-compute.done` and `warm-graphics.done` written
+
+A later roll-up run with Mesa's shader cache warm took 38.9 s for the same
+60,029 entries. The long 444.7 s figure is the cold-driver case.
+
+### Effect on the libraries built at boot
+
+The same 2,021 libraries used by the boot/title path:
+
+| | Before warm-up | After warm-up |
+|---|---:|---:|
+| pre-rasterization | 884 (80,807 ms, max 847.4 ms) | 884 (147 ms, max 7.6 ms) |
+| fragment | 1,137 (139,595 ms, max 3,135.2 ms) | 1,137 (176 ms, max 7.1 ms) |
+| total | ~220.4 s | ~0.32 s |
+
+That is about **680x less driver time** for the same libraries, with the
+worst case going from 3.1 s to 7.6 ms.
+
+### Before/after context for new areas
+
+On build 177 with the compute-only precache, a normal OoT session still built
+574 pipelines in 8 minutes (p90 632 ms, max 3.5 s) and had 20 frames over
+100 ms. The graphics warm-up is meant to cover those first visits. In-game
+measurement on this branch is still pending; the boot/title measurements above
+are the controlled part.
+
+## Mesh fallback
+
+Native `VK_EXT_mesh_shader` reliably triggers the GPUVM/TDR fault tracked in
+#871 and #1699 on RDNA2, so `nx2` keeps task/mesh draws on the compute fallback
+there. Since #1732 (`6b726533b4`) that choice is automatic: RADV on GFX10.3 is
+recognised from the driver ID and the accelerated 16-bit dot products, and
+`EDEN_NX2_FORCE_MESH_FALLBACK=1` only remains for other drivers and cards.
+
+The workaround is reported to help across several AMD series, not only Navi 23:
+
+| Series | Cards with reports | Result |
+|---|---|---|
+| RDNA2 (Navi 21/23) | RX 6600, RX 6650 XT, RX 6800 XT, RX 6950 XT | Native mesh resets; compute fallback is stable and keeps foliage/geometry |
+| RDNA3 (Navi 31/33/3.5) | RX 780M, RX 7900 XT, Radeon 8060S | Fallback is stable; native may work on Mesa >= 26.2.5 |
+| RDNA4 (Navi 48) | RX 9070 XT, Radeon AI PRO R9700 | Fallback is stable; native may work on newer Mesa |
+
+Sources: #871, #316, #1203, #1275, #1601, #1699, #1732, and the PR #814 matrix.
+
+With the fallback active, the full warm-up completed with no `ReportLoss`,
+no `VK_ERROR_DEVICE_LOST`, and no `amdgpu` page fault/ring timeout.
+
+## Caveats
+
+- The warm-up covers the static vertex/fragment/compute programs in the game
+  files. With the mesh compute fallback, the synthetic vertex stage generated
+  by mesh emulation is not in the warm file; fragment libraries are still
+  reused.
+- The first cold warm-up is long (~10 min) and writes ~1.5 GB for
+  `warm-graphics.bin` plus ~575 MB in the driver pipeline cache.
+- The branch is now ported to current `nx2`: the graphics marker mode is folded
+  into the current variant, the precache list removed by #1619 is not used, and
+  `WarmBuilderVersion` is 4 so #1577's stale-precache check rebuilds an existing
+  compute-only precache once.
+- Tested on one GPU/driver only; more AMD series and Windows results are needed.
+
+## Reproduce
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_QT=ON
+cmake --build build -j
+
+./build/bin/lichii
+```
+
+Open the game, right-click it and choose **Precache Shaders** if the warm files
+are missing, then boot it and let the loading screen finish the warm-up.
+
+Logs:
+
+```bash
+grep -E "Shader precache|Nx2Perf gpl|RADV on RDNA2" \
+  ~/.local/share/lichii/log/eden_log.txt
+```
+
+## Current nx2 port (2026-11-14)
+
+This branch was rebased onto current `nx2` (`ffbe52d0a4`) in two steps:
+
+1. Port `#1177` (shader libraries) onto current nx2; it builds.
+2. Merge `#1183` (graphics warm-up) and adapt it to the current precache marker.
+
+Adaptations for current nx2:
+
+- `WarmStamp` uses the current content hash + variant fields. The graphics marker's
+  old marker-version/mode fields are folded into `GraphicsWarmVariant()`: a hash of
+  `WarmVariant()` and the `KeyDynamicState` bits the device lacks.
+- The graphics precache list removed by #1619 is not used; the warm-up relies on
+  the `warm-graphics.done` marker.
+- `WarmBuilderVersion` is 4, so an existing compute-only precache is rebuilt once
+  with the graphics file.
+- The GUI checks the graphics warm file too when Shader libraries are on, so an
+  existing compute precache does not hide a missing graphics precache.
+
+Validation on the same RX 6650 XT / RADV 26.2.6:
+
+- Build: `lichii-cmd` compiles on current nx2 (GPL + graphics warm-up).
+- Final branch merged current `nx2` `642eace1b7`; `lichii` and `lichii-cmd` build.
+- Tests: `tests "ShaderPrecache*"` passes (17 test cases, 159 assertions).
+- Builder: 4.794 compute, 22.599 vertex, 37.430 fragment entries in 5,3 s.
+- Cold warm-up: 4.794 compute + 60.029 graphics, **0 failed**, graphics part
+  **582,3 s** (~9,7 min); `warm-compute.done` and `warm-graphics.done` written.
+- GPL fast linking on, mesh compute fallback chosen automatically for RADV
+  RDNA2 (#1732); no `ReportLoss`, no `VK_ERROR_DEVICE_LOST`, no `amdgpu` page
+  fault or ring timeout.
