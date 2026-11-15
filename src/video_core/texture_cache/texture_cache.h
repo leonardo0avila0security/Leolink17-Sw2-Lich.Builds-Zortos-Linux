@@ -159,10 +159,15 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     u64 mode_age = 0;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
+    // Memory the images queued for a write-back give back when they go (after their swizzle), so
+    // the pass's modes see it already.
+    u64 pending_freed_bytes = 0;
+    const auto UsedMemory = [&] {
+        return total_used_memory - (std::min)(total_used_memory, pending_freed_bytes);
+    };
     const auto Configure = [&](bool allow_aggressive) {
-        high_priority_mode = out_of_memory || total_used_memory >= expected_memory;
-        aggressive_mode =
-            allow_aggressive && (out_of_memory || total_used_memory >= critical_memory);
+        high_priority_mode = out_of_memory || UsedMemory() >= expected_memory;
+        aggressive_mode = allow_aggressive && (out_of_memory || UsedMemory() >= critical_memory);
         mode_age = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
         // EDEN_NX2_TC_MIN_AGE=<frames>: keep images used more recently while there is room
         // (thrash tests).
@@ -197,61 +202,38 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     // Images the GPU wrote are downloaded before the collector drops them. Each used to wait for the
     // GPU on its own (Finish per image), so a pass with dozens of them drained the GPU dozens of
     // times. A pass now records the copies, waits once and swizzles them back in the order they were
-    // queued (the order the writes used to land in), as DownloadMemory does. The deleted images'
-    // memory waits for the GPU tick (gpu_sentenced_images); an immediate delete flushes first. A
-    // batch is capped so the staging memory held at once stays bounded.
+    // queued (the order the writes used to land in), as DownloadMemory does. Such an image stays
+    // registered and tracked until its data is swizzled back, and only then goes: a guest write to
+    // its pages in between waits on the cache's lock and lands after the swizzle, as it did when
+    // each image was written back on its own. A batch is capped so the staging memory held at once
+    // stays bounded; its staging buffers are reserved (deferred) until their swizzle has read them.
     constexpr size_t MaxWriteBackBatchBytes = 64_MiB;
     using WriteBackMap = decltype(runtime.DownloadStagingBuffer(size_t{}));
     using WriteBackCopies = decltype(FullDownloadCopies(std::declval<const ImageInfo&>()));
     struct PendingWriteBack {
-        GPUVAddr gpu_addr;
-        ImageInfo info;
+        ImageId image_id;
         WriteBackCopies copies;
         WriteBackMap map;
+        const char* trace_reason; ///< DeleteReason when it was queued
     };
     boost::container::small_vector<PendingWriteBack, 16> pending_write_backs;
     size_t pending_write_back_bytes = 0;
-    const auto FlushWriteBacks = [&] {
-        if (pending_write_backs.empty()) {
-            return;
-        }
-        runtime.Finish();
-        for (PendingWriteBack& entry : pending_write_backs) {
-            SwizzleImage(*gpu_memory, entry.gpu_addr, entry.info, entry.copies,
-                         entry.map.mapped_span, swizzle_data_buffer);
-        }
-        pending_write_backs.clear();
-        pending_write_back_bytes = 0;
+    const auto IsPending = [&](ImageId image_id) {
+        return std::ranges::any_of(pending_write_backs, [image_id](const PendingWriteBack& entry) {
+            return entry.image_id == image_id;
+        });
     };
-    const auto QueueWriteBack = [&](Image& image) {
-        if (pending_write_back_bytes + image.unswizzled_size_bytes > MaxWriteBackBatchBytes) {
-            FlushWriteBacks();
-        }
-        auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
-        auto copies = FullDownloadCopies(image.info);
-        image.DownloadMemory(map, copies);
-        pending_write_back_bytes += image.unswizzled_size_bytes;
-        pending_write_backs.push_back({image.gpu_addr, image.info, std::move(copies), std::move(map)});
+    // The mode that picked an image, for EDEN_NX2_TC_TRACE. A write-back victim goes after its
+    // swizzle, when the pass (or a later one) may have changed the mode, so it keeps the one it was
+    // picked in.
+    const auto DeleteReason = [&] {
+        return evict_bad_overlaps   ? "gc-bad-overlap"
+               : aggressive_mode    ? "gc-aggressive"
+               : high_priority_mode ? "gc-high-priority"
+                                    : "gc";
     };
-    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode, &CanEvict,
-                          &evict_bad_overlaps, out_of_memory, &QueueWriteBack,
-                          &FlushWriteBacks](ImageId image_id) {
-        if (num_iterations == 0) {
-            return true;
-        }
-        bool must_download = false;
-        if (!CanEvict(image_id, &must_download)) {
-            return false;
-        }
-        --num_iterations;
+    const auto RemoveImage = [this](ImageId image_id, bool downloaded, const char* reason) {
         auto& image = slot_images[image_id];
-        if (must_download) {
-            QueueWriteBack(image);
-            ++gc_download_deletes;
-            ClearStaleImage(image);
-        } else {
-            MarkStale(image); // before UntrackImage (see MarkStale)
-        }
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, image_id);
         }
@@ -266,24 +248,67 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         }
         ++(True(image.flags & ImageFlagBits::CostlyLoad) ? gc_costly_deletes : gc_deletes);
         trace_delete_flags = static_cast<u32>(image.flags);
-        trace_delete_downloaded = must_download;
+        trace_delete_downloaded = downloaded;
         UnregisterImage(image_id);
-        trace_delete_reason = evict_bad_overlaps   ? "gc-bad-overlap"
-                              : aggressive_mode    ? "gc-aggressive"
-                              : high_priority_mode ? "gc-high-priority"
-                                                   : "gc";
-        const bool immediate_delete = image.scale_tick > frame_tick + 5;
-        if (immediate_delete) {
-            FlushWriteBacks(); // the image goes at once, before a queued copy of it ran
+        trace_delete_reason = reason;
+        DeleteImage(image_id, image.scale_tick > frame_tick + 5);
+    };
+    const auto FlushWriteBacks = [&] {
+        if (pending_write_backs.empty()) {
+            return;
         }
-        DeleteImage(image_id, immediate_delete);
+        runtime.Finish();
+        for (PendingWriteBack& entry : pending_write_backs) {
+            Image& image = slot_images[entry.image_id];
+            SwizzleImage(*gpu_memory, image.gpu_addr, image.info, entry.copies,
+                         entry.map.mapped_span, swizzle_data_buffer);
+            runtime.FreeDeferredStagingBuffer(entry.map);
+            ++gc_download_deletes;
+            ClearStaleImage(image);
+            RemoveImage(entry.image_id, true, entry.trace_reason);
+        }
+        pending_write_backs.clear();
+        pending_write_back_bytes = 0;
+        pending_freed_bytes = 0;
+    };
+    const auto QueueWriteBack = [&](Image& image, ImageId image_id) {
+        if (pending_write_back_bytes + image.unswizzled_size_bytes > MaxWriteBackBatchBytes) {
+            FlushWriteBacks();
+        }
+        auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes, true);
+        auto copies = FullDownloadCopies(image.info);
+        image.DownloadMemory(map, copies);
+        pending_write_back_bytes += image.unswizzled_size_bytes;
+        pending_freed_bytes += (image.HasScaled() ? GetScaledImageSizeBytes(image) : 0) +
+                               ImageMemoryBytes(image);
+        pending_write_backs.push_back(
+            {image_id, std::move(copies), std::move(map), DeleteReason()});
+    };
+    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode, &CanEvict,
+                          out_of_memory, &QueueWriteBack, &IsPending, &DeleteReason,
+                          &RemoveImage, &UsedMemory](ImageId image_id) {
+        if (num_iterations == 0) {
+            return true;
+        }
+        bool must_download = false;
+        if (IsPending(image_id) || !CanEvict(image_id, &must_download)) {
+            return false;
+        }
+        --num_iterations;
+        auto& image = slot_images[image_id];
+        if (must_download) {
+            QueueWriteBack(image, image_id);
+        } else {
+            MarkStale(image); // before UntrackImage (see MarkStale)
+            RemoveImage(image_id, false, DeleteReason());
+        }
         if (out_of_memory) {
             return false;
         }
-        if (aggressive_mode && total_used_memory < critical_memory) {
+        if (aggressive_mode && UsedMemory() < critical_memory) {
             num_iterations >>= 2;
             aggressive_mode = false;
-        } else if (high_priority_mode && total_used_memory < expected_memory) {
+        } else if (high_priority_mode && UsedMemory() < expected_memory) {
             num_iterations >>= 1;
             high_priority_mode = false;
         }
@@ -368,7 +393,7 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         evict_old_costly = false;
     }
     Collect();
-    if (out_of_memory || total_used_memory >= critical_memory) {
+    if (out_of_memory || UsedMemory() >= critical_memory) {
         Configure(true);
         Collect();
     }
