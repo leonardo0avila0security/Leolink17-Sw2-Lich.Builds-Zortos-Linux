@@ -37,16 +37,14 @@ use_graphics_pipeline_library=true
 shader_warm_threads=0              # every CPU thread
 ```
 
-Required on this GPU (existing `nx2` workaround, not changed by this branch):
-
-```bash
-EDEN_NX2_FORCE_MESH_FALLBACK=1
-```
+No environment variable is needed on RADV RDNA2: `nx2` picks the mesh compute
+fallback from the driver by itself (#1732, `6b726533b4`), so the measurements
+below were taken with that automatic choice and match a forced
+`EDEN_NX2_FORCE_MESH_FALLBACK=1` run.
 
 The log confirms:
 
 ```text
-EDEN_NX2_FORCE_MESH_FALLBACK: VK_EXT_mesh_shader disabled
 Nx2Perf gpl: graphics pipeline libraries on (fast linking)
 ```
 
@@ -104,12 +102,13 @@ On build 177 with the compute-only precache, a normal OoT session still built
 measurement on this branch is still pending; the boot/title measurements above
 are the controlled part.
 
-## Mesh fallback (`EDEN_NX2_FORCE_MESH_FALLBACK=1`)
+## Mesh fallback
 
-`EDEN_NX2_FORCE_MESH_FALLBACK=1` is already in `nx2`; this branch does not
-change it. It is required on this RDNA2 card because native
-`VK_EXT_mesh_shader` reliably triggers the GPUVM/TDR fault tracked in #871 and
-#1699.
+Native `VK_EXT_mesh_shader` reliably triggers the GPUVM/TDR fault tracked in
+#871 and #1699 on RDNA2, so `nx2` keeps task/mesh draws on the compute fallback
+there. Since #1732 (`6b726533b4`) that choice is automatic: RADV on GFX10.3 is
+recognised from the driver ID and the accelerated 16-bit dot products, and
+`EDEN_NX2_FORCE_MESH_FALLBACK=1` only remains for other drivers and cards.
 
 The workaround is reported to help across several AMD series, not only Navi 23:
 
@@ -119,10 +118,7 @@ The workaround is reported to help across several AMD series, not only Navi 23:
 | RDNA3 (Navi 31/33/3.5) | RX 780M, RX 7900 XT, Radeon 8060S | Fallback is stable; native may work on Mesa >= 26.2.5 |
 | RDNA4 (Navi 48) | RX 9070 XT, Radeon AI PRO R9700 | Fallback is stable; native may work on newer Mesa |
 
-Sources: #871, #316, #1203, #1275, #1601, #1699, and the PR #814 matrix. PR
-#814 is the path to make this choice automatic through a Mesh Shaders
-setting; this validation branch only relies on the existing environment
-variable.
+Sources: #871, #316, #1203, #1275, #1601, #1699, #1732, and the PR #814 matrix.
 
 With the fallback active, the full warm-up completed with no `ReportLoss`,
 no `VK_ERROR_DEVICE_LOST`, and no `amdgpu` page fault/ring timeout.
@@ -147,7 +143,6 @@ no `VK_ERROR_DEVICE_LOST`, and no `amdgpu` page fault/ring timeout.
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_QT=ON
 cmake --build build -j
 
-export EDEN_NX2_FORCE_MESH_FALLBACK=1
 ./build/bin/lichii
 ```
 
@@ -157,7 +152,7 @@ are missing, then boot it and let the loading screen finish the warm-up.
 Logs:
 
 ```bash
-grep -E "Shader precache|Nx2Perf gpl|FORCE_MESH_FALLBACK" \
+grep -E "Shader precache|Nx2Perf gpl|RADV on RDNA2" \
   ~/.local/share/lichii/log/eden_log.txt
 ```
 
@@ -188,5 +183,6 @@ Validation on the same RX 6650 XT / RADV 26.2.6:
 - Builder: 4.794 compute, 22.599 vertex, 37.430 fragment entries in 5,3 s.
 - Cold warm-up: 4.794 compute + 60.029 graphics, **0 failed**, graphics part
   **582,3 s** (~9,7 min); `warm-compute.done` and `warm-graphics.done` written.
-- GPL fast linking and `EDEN_NX2_FORCE_MESH_FALLBACK=1` active; no
-  `ReportLoss`, no `VK_ERROR_DEVICE_LOST`, no `amdgpu` page fault or ring timeout.
+- GPL fast linking on, mesh compute fallback chosen automatically for RADV
+  RDNA2 (#1732); no `ReportLoss`, no `VK_ERROR_DEVICE_LOST`, no `amdgpu` page
+  fault or ring timeout.
