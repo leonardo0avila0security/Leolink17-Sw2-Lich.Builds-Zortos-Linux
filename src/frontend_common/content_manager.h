@@ -59,10 +59,17 @@ inline size_t RemoveAllDLC(Core::System& system, const u64 program_id) {
     const auto& fs_controller = system.GetFileSystemController();
     const auto dlc_entries = system.GetContentProvider().ListEntriesFilter(
         FileSys::TitleType::AOC, FileSys::ContentRecordType::Data);
-    std::vector<u64> program_dlc_entries;
-
+    std::vector<u64> dlc_title_ids;
+    dlc_title_ids.reserve(dlc_entries.size());
     for (const auto& entry : dlc_entries) {
-        if (FileSys::GetBaseTitleID(entry.title_id) == program_id) {
+        dlc_title_ids.push_back(entry.title_id);
+    }
+    // A Switch 2 Edition's add-ons keep the Switch 1 application's ID.
+    const u64 dlc_base_tid = FileSys::GetAddOnApplicationID(program_id, dlc_title_ids);
+
+    std::vector<u64> program_dlc_entries;
+    for (const auto& entry : dlc_entries) {
+        if (FileSys::GetBaseTitleID(entry.title_id) == dlc_base_tid) {
             program_dlc_entries.push_back(entry.title_id);
         }
     }
