@@ -1609,11 +1609,18 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
     const auto dlc_entries_with_origin =
         content_union->ListEntriesFilterOrigin(std::nullopt, TitleType::AOC, ContentRecordType::Data);
 
+    // A Switch 2 Edition's add-ons keep the Switch 1 application's ID, where aoc:u finds them.
+    std::vector<u64> dlc_title_ids;
+    dlc_title_ids.reserve(dlc_entries_with_origin.size());
+    for (const auto& [slot, entry] : dlc_entries_with_origin) {
+        dlc_title_ids.push_back(entry.title_id);
+    }
+    const u64 dlc_base_tid = GetAddOnApplicationID(title_id, dlc_title_ids);
+
     dlc_match.reserve(dlc_entries_with_origin.size());
     for (const auto& [slot, entry] : dlc_entries_with_origin) {
         const auto base_tid = GetBaseTitleID(entry.title_id);
-        const bool matches_base = base_tid == title_id;
-        if (!matches_base) {
+        if (base_tid != dlc_base_tid) {
             LOG_DEBUG(Loader, "DLC {:016X} base {:016X} doesn't match title {:016X}",
                       entry.title_id, base_tid, title_id);
             continue;
