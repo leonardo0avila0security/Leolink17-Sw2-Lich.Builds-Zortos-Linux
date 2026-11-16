@@ -4,6 +4,14 @@ Most of the controls should work out of the box. If not, use a joystick calibrat
 
 - https://github.com/dkosmari/calibrate-joystick
 
+## Steam Controller (2026) haptics
+
+On Windows, select the physical Steam Controller and enable **Detailed Steam Controller (2026) haptics** in the vibration settings. The option is off by default. Steam can reset the controller's haptics mode, so close Steam when diagnosing missing or interrupted output. Steam Input's public rumble API does not provide the arbitrary dual-band PCM stream used here.
+
+The backend sends the game's low and high frequency bands independently to each grip using continuous-phase PCM. It supports the 2026 controller's USB and receiver product IDs in the Windows HID backend. The puck/receiver path has been tested with Ocarina of Time notes; USB and Bluetooth playback have not been verified on hardware. Physical output uses the community-documented grip PCM protocol and requires no extra DLL. If HID setup or transport fails, the SDL standard-rumble path takes over and loses pitch detail.
+
+The HID worker stops on disable, input unload, disconnect and shutdown. It retries the controller mode once after repeated write failures, then falls back to standard rumble. See Valve's [Steam Input API](https://partner.steamgames.com/doc/api/ISteamInput), SDL's [Steam controller report definitions](https://github.com/libsdl-org/SDL/blob/release-3.4.14/src/joystick/hidapi/steam/controller_structs.h), and [community PCM measurements](https://github.com/trzz1214/RenHDrum/blob/v0.4.0/docs/research/08-steam-controller-haptics.md).
+
 ## Using external controllers on the Steamdeck
 
 In desktop mode ignore your Pro controller/XBOX controller external controller and use **Steam Virtual Gamepad 0 as Player 1**. If you have multiple external controllers set **Player 2 to Steam Virtual Gamepad 1**. Steam app must not be closed on desktop mode.
