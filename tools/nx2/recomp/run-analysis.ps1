@@ -32,14 +32,17 @@ Set-Content -Path $env:LICHII_BLOCK_TRACE -Value "" -NoNewline
 # eden-cli reads sdl2-config.ini, not the GUI qt-config.ini, so controllers set up in the GUI are
 # ignored. Run on a copy of the GUI config (the CLI rewrites its config file on start and exit).
 $cliArgs = @()
+$cliCfg = $null
 if (Test-Path $GuiConfig) {
-    Copy-Item $GuiConfig "$Out\cli-config.ini" -Force
-    $cliArgs = @("-c", "$Out\cli-config.ini")
+    $cliCfg = Join-Path $env:TEMP "lichii-cli-config.ini"   # holds tokens: never put it in $Out
+    Copy-Item $GuiConfig $cliCfg -Force
+    $cliArgs = @("-c", $cliCfg)
     Write-Host "Using the GUI settings (controllers) from $GuiConfig"
 } else {
     Write-Host "No GUI config at $GuiConfig: the CLI will use keyboard defaults."
 }
 & $Cli @cliArgs --filter "*:Info Loader:Debug" -g $Game 2>&1 | Tee-Object -FilePath "$Out\eden_log.txt"
+if ($cliCfg) { Remove-Item $cliCfg -Force -ErrorAction SilentlyContinue }
 $HavePython = $null -ne (Get-Command $Python -ErrorAction SilentlyContinue)
 if ($HavePython) {
     $exefs = Split-Path -Parent $Game
@@ -64,7 +67,7 @@ Set-Content "$Out\log_digest.txt" $digest
 
 Remove-Item "$Out\lichii-logs-*.zip" -ErrorAction SilentlyContinue
 Compress-Archive -Path "$Out\log_digest.txt" -DestinationPath "$Out\lichii-logs-summary.zip"
-$files = Get-ChildItem $Out -File | Where-Object { $_.Extension -ne ".zip" }
+$files = Get-ChildItem $Out -File | Where-Object { $_.Extension -notin ".zip", ".ini" }
 Compress-Archive -Path $files.FullName -DestinationPath "$Out\lichii-logs-full.zip" -CompressionLevel Optimal
 foreach ($z in "lichii-logs-summary.zip", "lichii-logs-full.zip") {
     "{0}  {1:N1} MiB" -f "$Out\$z", ((Get-Item "$Out\$z").Length / 1MB) | Write-Host

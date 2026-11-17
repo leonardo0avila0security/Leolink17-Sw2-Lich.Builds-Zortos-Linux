@@ -34,14 +34,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 MODULE_RE = re.compile(r"loaded module (\S+) @ (0x[0-9a-fA-F]+)")
+SIZE_RE = re.compile(r"Module (\S+) loaded at (0x[0-9a-fA-F]+) \(size (0x[0-9a-fA-F]+)\)")
 SVC_RE = re.compile(r"svc (0x[0-9a-fA-F]+) in")
 IPC_RE = re.compile(r"\bt?ipc (\S+?)::(\d+) \(([^)]*)\)")
 
 
 def parse_log(path):
     modules, svcs, ipcs = {}, collections.Counter(), collections.Counter()
+    sizes = {}
     with open(path, errors="replace") as f:
         for line in f:
+            m = SIZE_RE.search(line)
+            if m:
+                sizes[m.group(1)] = int(m.group(3), 16)
+                continue
             m = MODULE_RE.search(line)
             if m:
                 modules[m.group(1)] = int(m.group(2), 16)
@@ -53,7 +59,7 @@ def parse_log(path):
             m = IPC_RE.search(line)
             if m:
                 ipcs[(m.group(1), int(m.group(2)), m.group(3))] += 1
-    return modules, svcs, ipcs
+    return modules, svcs, ipcs, sizes
 
 
 def parse_blocks(path):
@@ -123,7 +129,7 @@ def main():
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    log_modules, svcs, ipcs = parse_log(a.log)
+    log_modules, svcs, ipcs, log_sizes = parse_log(a.log)
     blocks = parse_blocks(a.blocks)
     exefs = load_exefs(a.exefs) if a.exefs else {}
     if not log_modules:
@@ -137,7 +143,7 @@ def main():
         if i < 0:
             return None
         name, base = order[i]
-        size = exefs.get(name, (None, {}))[0]
+        size = exefs.get(name, (None, {}))[0] or log_sizes.get(name)
         if size is not None and addr >= base + size:
             return None
         return name, base
@@ -156,7 +162,7 @@ def main():
         bl = per_module.get(name, [])
         modules_json[name] = {
             "base": hex(base),
-            "size": exefs[name][0] if name in exefs else None,
+            "size": (exefs[name][0] if name in exefs else log_sizes.get(name)),
             "blocks": len(bl),
             "executed_bytes": sum(e - p for p, e, *_ in bl),
         }

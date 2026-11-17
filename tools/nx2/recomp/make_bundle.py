@@ -54,7 +54,7 @@ def main():
 
     with zipfile.ZipFile(out / "lichii-logs-full.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for p in out.rglob("*"):
-            if p.is_file() and p.suffix != ".zip":
+            if p.is_file() and p.suffix not in (".zip", ".ini"):
                 z.write(p, p.relative_to(out))
 
     for name in ("lichii-logs-summary.zip", "lichii-logs-full.zip"):
