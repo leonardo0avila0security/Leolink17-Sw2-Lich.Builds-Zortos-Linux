@@ -16,7 +16,7 @@ export EDEN_NX2_FS_READ_TRACE=1                   # file reads (what data the ga
 export EDEN_NX2_DEBUG_SERVER=127.0.0.1:6545       # live state, see docs/nx2/debug-mcp.md
 export EDEN_NX2_DEBUG_DIR="$OUT/debug"
 : > "$LICHII_BLOCK_TRACE"
-"$CLI" --filter "*:Info Loader:Debug Kernel_SVC:Info Service:Info" -g "$GAME" 2>&1 | tee "$OUT/eden_log.txt" || true
+"$CLI" --filter "*:Info Loader:Debug" -g "$GAME" 2>&1 | tee "$OUT/eden_log.txt" || true
 EXEFS_ARG=()
 [ -d "$(dirname "$GAME")" ] && EXEFS_ARG=(--exefs "$(dirname "$GAME")")
 python3 "$HERE/analyze_trace.py" --blocks "$LICHII_BLOCK_TRACE" --log "$OUT/eden_log.txt" \

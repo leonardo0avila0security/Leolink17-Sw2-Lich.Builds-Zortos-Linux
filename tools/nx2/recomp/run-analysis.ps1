@@ -9,6 +9,12 @@ param(
     [string]$Python = "python"
 )
 $ErrorActionPreference = "Stop"
+if (-not (Test-Path -LiteralPath $Game -PathType Leaf)) {
+    throw "Game file not found: $Game`nGive the path of the game itself: the 'main' file inside the game's exefs folder, or a .nsp/.xci file."
+}
+if ((Split-Path -Leaf $Game) -eq "main" -and -not (Test-Path (Join-Path (Split-Path -Parent $Game) "main.npdm"))) {
+    throw "No main.npdm next to $Game. This is not a game exefs folder (it must contain main, main.npdm, rtld, sdk)."
+}
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
@@ -21,7 +27,7 @@ $env:EDEN_NX2_FS_READ_TRACE = "1"
 $env:EDEN_NX2_DEBUG_SERVER = "127.0.0.1:6545"
 $env:EDEN_NX2_DEBUG_DIR = "$Out\debug"
 Set-Content -Path $env:LICHII_BLOCK_TRACE -Value "" -NoNewline
-& $Cli --filter "*:Info Loader:Debug Kernel_SVC:Info Service:Info" -g $Game 2>&1 | Tee-Object -FilePath "$Out\eden_log.txt"
+& $Cli --filter "*:Info Loader:Debug" -g $Game 2>&1 | Tee-Object -FilePath "$Out\eden_log.txt"
 $HavePython = $null -ne (Get-Command $Python -ErrorAction SilentlyContinue)
 if ($HavePython) {
     $exefs = Split-Path -Parent $Game
