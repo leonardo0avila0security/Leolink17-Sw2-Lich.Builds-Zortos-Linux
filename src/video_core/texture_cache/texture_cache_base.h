@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <functional>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -294,6 +295,14 @@ public:
     /// Notify the cache that a new frame has been queued
     void TickFrame();
 
+    /// Where the guest CPU writes into GPU-written memory that were collected but not applied yet
+    /// come from (as BufferCache::SetPendingCpuWrites): the collector's write-backs must not write
+    /// over them.
+    using PendingCpuWrites = std::function<void(const std::function<void(DAddr, size_t)>&)>;
+    void SetPendingCpuWrites(PendingCpuWrites source) {
+        pending_cpu_writes = std::move(source);
+    }
+
     /// Return a constant reference to the given image view id
     [[nodiscard]] const ImageView& GetImageView(ImageViewId id) const noexcept;
 
@@ -482,6 +491,8 @@ public:
     Common::SpinRecursiveMutex mutex;
 
 private:
+    PendingCpuWrites pending_cpu_writes;
+
     /// Iterate over all page indices in a range
     template <typename Func>
     static void ForEachCPUPage(DAddr addr, size_t size, Func&& func) {
