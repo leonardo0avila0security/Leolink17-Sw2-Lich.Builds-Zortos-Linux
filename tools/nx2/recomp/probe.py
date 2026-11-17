@@ -167,20 +167,25 @@ class Modules:
         return f"{addr:#x}"
 
 
-def read_bases(logs, timeout_s):
+def read_bases(logs, timeout_s, since=0.0):
+    """Module bases from the first log that has them. Files older than since (a previous run's
+    log, with other ASLR bases) are skipped."""
     deadline = time.time() + timeout_s
     while True:
-        bases = {}
         for p in logs:
+            bases = {}
             try:
+                if since and Path(p).stat().st_mtime < since:
+                    continue
                 for line in open(p, errors="replace"):
                     m = MODULE_RE.search(line)
                     if m:
                         bases[m.group(1)] = (int(m.group(2), 16), int(m.group(3), 16))
             except OSError:
-                pass
-        if "main" in bases and "sdk" in bases:
-            return bases
+                continue
+            if "main" in bases and "sdk" in bases:
+                print(f"module bases from {p}")
+                return bases
         if time.time() > deadline:
             raise SystemExit(f"no 'Module main/sdk loaded at' lines in {logs}")
         time.sleep(1)
@@ -261,11 +266,12 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--seconds", type=float, default=0, help="stop probing after this long (0: until exit)")
     ap.add_argument("--summary", help="also write a short text report here")
+    ap.add_argument("--since", type=float, default=0, help="ignore logs not written since this Unix time")
     a = ap.parse_args()
 
     spec = json.load(open(a.spec))
     print("waiting for the game to load...", flush=True)
-    bases = read_bases(a.log, 900)
+    bases = read_bases(a.log, 900, a.since)
     mods = Modules(bases, a.exefs)
     for n, (b, s) in mods.mods:
         print(f"  {n} @ {b:#x} size {s:#x} ({len(mods.syms.get(n, []))} symbols)")

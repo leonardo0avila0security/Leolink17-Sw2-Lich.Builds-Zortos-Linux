@@ -33,15 +33,27 @@ if (Test-Path $GuiConfig) {
     $cliArgs = @("-c", "`"$cliCfg`"") + $cliArgs
 }
 Remove-Item "$Out\*" -Force -ErrorAction SilentlyContinue
+# Lichii writes its log to its own folder; the console copy can be empty when redirected.
+$cliDir = Split-Path -Parent (Resolve-Path $Cli)
+$appLogs = @("$cliDir\user\log\eden_log.txt", "$env:APPDATA\lichii\log\eden_log.txt")
+$since = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 2
 $emu = Start-Process -FilePath (Resolve-Path $Cli) -ArgumentList $cliArgs -PassThru -NoNewWindow `
     -RedirectStandardError "$Out\eden_log.txt" -RedirectStandardOutput "$Out\eden_stdout.txt"
 Write-Host "Lichii started (pid $($emu.Id)). The probe attaches once the game has loaded."
 
-& $Probe --port $Port --log "$Out\eden_log.txt" --log "$Out\eden_stdout.txt" --exefs $exefs `
+$logArgs = @("--log", "$Out\eden_log.txt", "--log", "$Out\eden_stdout.txt")
+foreach ($l in $appLogs) { $logArgs += @("--log", $l) }
+& $Probe --port $Port @logArgs --since $since --exefs $exefs `
     --spec $Spec --out "$Out\probes.jsonl" --summary "$Out\probes_summary.txt" --seconds $Seconds
 
 Write-Host "`nProbing finished. Keep playing or close the game."
 $emu.WaitForExit()
 if ($cliCfg) { Remove-Item $cliCfg -Force -ErrorAction SilentlyContinue }
+foreach ($l in $appLogs) {
+    if ((Test-Path $l) -and ((Get-Item $l).LastWriteTimeUtc -gt [DateTimeOffset]::FromUnixTimeSeconds($since).UtcDateTime)) {
+        Copy-Item $l "$Out\lichii_log.txt" -Force
+        Write-Host "Lichii's log copied to $Out\lichii_log.txt"
+    }
+}
 Write-Host "Send this file: $Out\probes_summary.txt"
 Write-Host "(and $Out\probes.jsonl through the analysis-data release if asked)"
