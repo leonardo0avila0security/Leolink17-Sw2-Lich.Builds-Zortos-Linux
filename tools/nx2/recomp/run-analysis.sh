@@ -8,7 +8,7 @@ CLI="$1"; GAME="$2"; OUT="$3"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "$OUT"
 export LICHII_BLOCK_TRACE="$OUT/blocks.jsonl"     # guest basic blocks, one JSON line each
-export EDEN_NX2_SVC_TRACE=1                       # every SVC with arguments
+[ -n "${SVC_TRACE:-}" ] && export EDEN_NX2_SVC_TRACE=1   # every SVC (huge); off by default
 export EDEN_NX2_IPC_TRACE=1                       # every HLE service command
 export EDEN_NX2_IPC_SUMMARY=1                     # counts per command and result
 export EDEN_NX2_MEM_TRACE=1                       # memory layout / heap requests

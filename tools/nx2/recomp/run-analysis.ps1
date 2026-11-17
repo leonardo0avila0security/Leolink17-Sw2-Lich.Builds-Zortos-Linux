@@ -6,7 +6,9 @@ param(
     [Parameter(Mandatory = $true)][string]$Game,
     [string]$Out = ".\out",
     [string]$Cli = ".\eden-cli.exe",
-    [string]$Python = "python"
+    [string]$Python = "python",
+    [string]$GuiConfig = "$env:APPDATA\lichii\config\qt-config.ini",
+    [switch]$SvcTrace
 )
 $ErrorActionPreference = "Stop"
 if (-not (Test-Path -LiteralPath $Game -PathType Leaf)) {
@@ -19,7 +21,7 @@ $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 $env:LICHII_BLOCK_TRACE = "$Out\blocks.jsonl"
-$env:EDEN_NX2_SVC_TRACE = "1"
+if ($SvcTrace) { $env:EDEN_NX2_SVC_TRACE = "1" }  # off by default: thousands of lines per second
 $env:EDEN_NX2_IPC_TRACE = "1"
 $env:EDEN_NX2_IPC_SUMMARY = "1"
 $env:EDEN_NX2_MEM_TRACE = "1"
@@ -27,7 +29,17 @@ $env:EDEN_NX2_FS_READ_TRACE = "1"
 $env:EDEN_NX2_DEBUG_SERVER = "127.0.0.1:6545"
 $env:EDEN_NX2_DEBUG_DIR = "$Out\debug"
 Set-Content -Path $env:LICHII_BLOCK_TRACE -Value "" -NoNewline
-& $Cli --filter "*:Info Loader:Debug" -g $Game 2>&1 | Tee-Object -FilePath "$Out\eden_log.txt"
+# eden-cli reads sdl2-config.ini, not the GUI qt-config.ini, so controllers set up in the GUI are
+# ignored. Run on a copy of the GUI config (the CLI rewrites its config file on start and exit).
+$cliArgs = @()
+if (Test-Path $GuiConfig) {
+    Copy-Item $GuiConfig "$Out\cli-config.ini" -Force
+    $cliArgs = @("-c", "$Out\cli-config.ini")
+    Write-Host "Using the GUI settings (controllers) from $GuiConfig"
+} else {
+    Write-Host "No GUI config at $GuiConfig: the CLI will use keyboard defaults."
+}
+& $Cli @cliArgs --filter "*:Info Loader:Debug" -g $Game 2>&1 | Tee-Object -FilePath "$Out\eden_log.txt"
 $HavePython = $null -ne (Get-Command $Python -ErrorAction SilentlyContinue)
 if ($HavePython) {
     $exefs = Split-Path -Parent $Game
