@@ -254,7 +254,11 @@ finish_this_inst:
     const A64::LocationDescriptor end_location{block.EndLocation()};
 
     if (BlockTraceEnabled()) [[unlikely]] {
-        BlockTraceRecord(descriptor.PC(), end_location.PC(), block.terminal);
+        const bool is_call = std::any_of(block.instructions.begin(), block.instructions.end(),
+                                         [](const IR::Inst& inst) {
+                                             return inst.GetOpcode() == IR::Opcode::PushRSB;
+                                         });
+        BlockTraceRecord(descriptor.PC(), end_location.PC(), block.terminal, is_call);
     }
 
     const auto range = boost::icl::discrete_interval<u64>::closed(descriptor.PC(), end_location.PC() - 1);

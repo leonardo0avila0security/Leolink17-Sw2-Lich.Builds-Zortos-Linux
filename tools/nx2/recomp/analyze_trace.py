@@ -62,17 +62,27 @@ def parse_log(path):
     return modules, svcs, ipcs, sizes
 
 
-def parse_blocks(path):
-    blocks = {}
+CALLS = set()  # pcs of blocks that end in BL/BLR (traces from the call-aware tracer)
+
+
+def parse_blocks(path, shift=0, blocks=None, first=None):
+    """Adds the blocks of one trace, moved down by shift (ASLR gives every run its own base).
+    first, if given, is a one-item list that receives the pc of the trace's first block."""
+    blocks = {} if blocks is None else blocks
     with open(path) as f:
         for line in f:
             try:
                 b = json.loads(line)
             except json.JSONDecodeError:
                 continue  # truncated last line of a killed run
-            pc, end = int(b["pc"], 16), int(b["end"], 16)
-            blocks[(pc, end)] = (pc, end, b["term"], b["cond"], [int(x, 16) for x in b["next"]])
-    return list(blocks.values())
+            pc, end = int(b["pc"], 16) - shift, int(b["end"], 16) - shift
+            if first is not None and not first:
+                first.append(int(b["pc"], 16))
+            if b.get("call"):
+                CALLS.add(pc)
+            blocks[(pc, end)] = (pc, end, b["term"], b["cond"],
+                                 [int(x, 16) - shift for x in b["next"]])
+    return blocks
 
 
 def load_exefs(exefs):
@@ -96,12 +106,19 @@ def load_exefs(exefs):
 
 
 def classify_entries(blocks):
-    """Entry candidates: targets of a non-fallthrough link edge, ranked by distinct callers."""
+    """Function entries. With call flags: static BL targets. Without (older traces): targets of a
+    non-fallthrough link edge, which also catches ordinary branches and over-counts."""
     callers = collections.defaultdict(set)
     for pc, end, term, cond, nxt in blocks:
-        for t in nxt:
-            if t != end:
-                callers[t].add(pc)
+        if CALLS:
+            # call-aware trace: only BL targets are function entries
+            if pc in CALLS:
+                for t in nxt:
+                    callers[t].add(pc)
+        else:
+            for t in nxt:
+                if t != end:
+                    callers[t].add(pc)
     starts = {b[0] for b in blocks}
     return {t: c for t, c in callers.items() if t in starts}
 
@@ -121,7 +138,8 @@ def reach(entry, by_pc, entries):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--blocks", required=True)
+    ap.add_argument("--blocks", required=True, action="append",
+                    help="trace file; repeat to merge runs (the first run defines the module bases)")
     ap.add_argument("--log", required=True)
     ap.add_argument("--exefs")
     ap.add_argument("--out", required=True)
@@ -130,7 +148,17 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     log_modules, svcs, ipcs, log_sizes = parse_log(a.log)
-    blocks = parse_blocks(a.blocks)
+    # The first block of a run is the entry of rtld, the lowest module. Runs are moved so that
+    # it sits where the first run (and the log) put it.
+    first_ref = []
+    merged = parse_blocks(a.blocks[0], 0, None, first_ref)
+    for extra in a.blocks[1:]:
+        first = []
+        parse_blocks(extra, 0, {}, first)  # only to read its first pc
+        shift = first[0] - first_ref[0]
+        print(f"{extra}: base moved by {shift:#x}", file=sys.stderr)
+        parse_blocks(extra, shift, merged)
+    blocks = list(merged.values())
     exefs = load_exefs(a.exefs) if a.exefs else {}
     if not log_modules:
         sys.exit("no 'loaded module' lines in the log: run with --filter '*:Info Loader:Debug'")
@@ -208,6 +236,7 @@ def main():
     lines += ["", f"Function entry candidates: {len(functions)} "
               f"({sum(1 for f in functions if f['symbol'])} with exported symbols)",
               f"Indirect-branch blocks to resolve: {len(indirect)}",
+             f"Call-aware trace: {'yes, %d call sites' % len(CALLS) if CALLS else 'no (entries over-counted; rerun with the new build)'}",
               f"Distinct SVCs: {len(svcs)}, distinct IPC commands: {len(ipcs)}"]
     (out / "report.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))

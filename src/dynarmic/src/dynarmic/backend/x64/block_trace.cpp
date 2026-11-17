@@ -73,7 +73,7 @@ bool BlockTraceEnabled() noexcept {
     return enabled;
 }
 
-void BlockTraceRecord(u64 pc, u64 end_pc, const IR::Term::Terminal& terminal) noexcept {
+void BlockTraceRecord(u64 pc, u64 end_pc, const IR::Term::Terminal& terminal, bool is_call) noexcept {
     Sink& sink = GetSink();
     if (sink.file == nullptr) {
         return;
@@ -100,8 +100,8 @@ void BlockTraceRecord(u64 pc, u64 end_pc, const IR::Term::Terminal& terminal) no
         next += fmt::format("{}\"0x{:x}\"", next.empty() ? "" : ",", target);
     }
     const std::string line = fmt::format(
-        "{{\"pc\":\"0x{:x}\",\"end\":\"0x{:x}\",\"term\":\"{}\",\"cond\":{},\"next\":[{}]}}\n", pc,
-        end_pc, info.kind, info.conditional ? "true" : "false", next);
+        "{{\"pc\":\"0x{:x}\",\"end\":\"0x{:x}\",\"term\":\"{}\",\"cond\":{},\"call\":{},\"next\":[{}]}}\n",
+        pc, end_pc, info.kind, info.conditional ? "true" : "false", is_call ? "true" : "false", next);
 
     std::scoped_lock lock{sink.mutex};
     if (!sink.seen.insert(pc ^ (end_pc * 0x9E3779B97F4A7C15ull)).second) {
