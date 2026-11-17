@@ -148,6 +148,8 @@ if ("x86_64" IN_LIST ARCHITECTURE)
         backend/x64/abi.h
         backend/x64/block_of_code.cpp
         backend/x64/block_of_code.h
+        backend/x64/block_trace.cpp
+        backend/x64/block_trace.h
         backend/x64/callback.cpp
         backend/x64/callback.h
         backend/x64/constant_pool.cpp
