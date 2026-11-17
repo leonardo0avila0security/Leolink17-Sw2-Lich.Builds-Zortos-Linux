@@ -54,3 +54,15 @@ tools/nx2/recomp/run-analysis.sh build-analysis/bin/eden-cli "<title>/exefs/main
 - The block tracer records blocks at compile time, not execution counts or call edges.
 - Orbitals on Lichii must boot first. Check `docs/shader-sweep-all-games-20261104.md`: the
   Global Friends Pass entry notes that Unreal I/O Store (`.utoc`/`.ucas`) needs a selective reader.
+
+## Getting a build and sending logs
+
+- Build: the `analysis-build` workflow (Actions tab, "Run workflow", or any push to
+  `analysis/recomp-build`) produces the artifact `lichii-analysis-windows-<sha>`: `eden-cli.exe`,
+  PDBs and the `recomp/` scripts.
+- Run on Windows: `.\recomp\run-analysis.ps1 -Game "<title>\exefs\main"` (needs Python 3 with
+  numpy for `--exefs` symbol lookup). On Linux/macOS use `run-analysis.sh`.
+- Logs: the run ends with two zips in the out folder. `lichii-logs-summary.zip` (a few MB: log
+  digest, report, SVC/IPC list, top functions) is the one to send first.
+  `lichii-logs-full.zip` holds the raw log and block trace. They contain no game files or keys;
+  the full log can show file paths, so check it before sharing.

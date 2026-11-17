@@ -21,3 +21,4 @@ EXEFS_ARG=()
 [ -d "$(dirname "$GAME")" ] && EXEFS_ARG=(--exefs "$(dirname "$GAME")")
 python3 "$HERE/analyze_trace.py" --blocks "$LICHII_BLOCK_TRACE" --log "$OUT/eden_log.txt" \
   "${EXEFS_ARG[@]}" --out "$OUT/analysis"
+python3 "$HERE/make_bundle.py" "$OUT"
