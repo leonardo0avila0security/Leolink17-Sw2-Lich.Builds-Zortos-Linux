@@ -82,6 +82,7 @@
 #include "video_core/shader_notify.h"
 #include "video_core/shader_warm/shader_warm_builder.h"
 #include "video_core/surface.h"
+#include "video_core/xc2_cloud_policy.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
@@ -728,6 +729,8 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
                                 "avoid the stale mesh user SGPR hang");
     }
 
+    const bool xc2_cloud_policy =
+        VideoCore::IsXenoblade2CloudPolicyEnabled(Settings::GetCurrentProgramID());
     host_info = Shader::HostTranslateInfo{
         .min_ssbo_alignment = device.GetStorageBufferAlignment(),
         .max_per_stage_descriptor_sampled_images = device.GetMaxPerStageDescriptorSampledImages(),
@@ -756,6 +759,9 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
         .support_conditional_barrier = device.SupportsConditionalBarriers(),
         .single_lane_geometry_subgroups = !profile.SupportsSubgroupStage(Shader::Stage::Geometry),
         .support_byte_addressed_r16 = true,
+        .reconstruct_position_varyings = xc2_cloud_policy &&
+            (driver_id == VK_DRIVER_ID_AMD_PROPRIETARY ||
+             driver_id == VK_DRIVER_ID_AMD_OPEN_SOURCE || driver_id == VK_DRIVER_ID_MESA_RADV),
         // The arrays are indexed per invocation, which needs nonuniform indexing to be defined.
         .support_handle_table_arrays = device.IsSampledImageArrayNonUniformIndexingSupported(),
         .needs_lrz_disable = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY,
@@ -1030,7 +1036,7 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
         if (!mesh_vertex_inputs_seeded) {
             mesh_vertex_inputs_seeded = true;
             for (const auto& [key, pipeline] : graphics_cache) {
-                if (CanSeedMeshVertexInput(pipeline.get())) {
+                if (pipeline && pipeline->IsMeshPipeline()) {
                     mesh_vertex_inputs.Add(key);
                 }
             }
@@ -3082,6 +3088,20 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
                 storage_buffers + auxiliary_buffers, auxiliary_buffers, set_limit);
         }
     }
+    const bool triangle_fill =
+        (key.state.topology == Maxwell::PrimitiveTopology::Triangles ||
+         key.state.topology == Maxwell::PrimitiveTopology::TriangleStrip ||
+         key.state.topology == Maxwell::PrimitiveTopology::TriangleFan ||
+         key.state.topology == Maxwell::PrimitiveTopology::Quads ||
+         key.state.topology == Maxwell::PrimitiveTopology::QuadStrip) &&
+        FixedPipelineState::UnpackPolygonMode(key.state.polygon_mode) == Maxwell::PolygonMode::Fill;
+    // Rescaling is fine: the viewport pushed per draw is the one the host applies.
+    if (host_info.reconstruct_position_varyings && triangle_fill &&
+        key.state.msaa_mode.Value() == Tegra::Texture::MsaaMode::Msaa1x1 &&
+        !layer_source_program && key.unique_hashes[2] == 0 && key.unique_hashes[3] == 0 &&
+        key.unique_hashes[4] == 0 && uses_vertex_b && key.unique_hashes[5] != 0) {
+        Shader::Optimization::PositionVaryingPass(programs[1], programs[5]);
+    }
     u64 deferred_ir_bytes = 0;
     std::unique_ptr<QueuedIrBudget::Reservation> ir_reservation;
     if (emit_pools) {
@@ -3608,12 +3628,6 @@ ComputePipelineCacheEntry PipelineCache::CreateComputePipeline(
     }
 
     auto program{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
-    // Compute has eight constant buffers. The Ampere lowering reads NVN2's root tables (banks
-    // 24-31) from bank 17, which only the 3D engine provides.
-    if (program.info.constant_buffer_mask >> Tegra::Engines::KeplerCompute::NumConstBuffers) {
-        throw Shader::RuntimeError("Compute program reads constant buffer mask {:#x}",
-                                   program.info.constant_buffer_mask);
-    }
     const VkDriverIdKHR driver_id = device.GetDriverID();
     const bool needs_shared_mem_clamp =
         driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||

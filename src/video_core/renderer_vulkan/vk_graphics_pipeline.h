@@ -79,6 +79,11 @@ class RescalingPushConstant;
 class RenderAreaPushConstant;
 class Scheduler;
 
+/// Viewport 0 as the host applies it (x, y, width, height); the shaders that rebuild position
+/// varyings from the fragment coordinate read it as a push constant.
+std::array<f32, 4> GetHostViewport0(const Device& device,
+                                    const Tegra::Engines::Maxwell3D::Regs& regs, bool is_rescaling);
+
 /// EDEN_NX2_DRAW_REUSE_PROBE=1: how many draws repeat the previous frame's slowly changing state,
 /// and what preparing them costs (RasterizerVulkan::NoteDrawReuse).
 inline bool DrawReuseProbeEnabled() {
@@ -427,6 +432,12 @@ private:
     void CheckColorFeedbackLoop(std::span<const VideoCommon::ImageViewInOut> views,
                                 const std::array<bool, NUM_STAGES>& stages, size_t fragment_entry);
 
+    /// EDEN_NX2_FB_COPY: a colour target the draw samples is read from a copy taken before the
+    /// draw, as the guest's texture cache would have it, not through the image being written.
+    /// `texture_entries` holds each stage's first queued image entry (or SIZE_MAX).
+    void PatchFeedbackSamples(std::span<const VideoCommon::ImageViewInOut> views,
+                              const std::array<size_t, NUM_STAGES>& texture_entries);
+
     bool ConfigureDraw(const RescalingPushConstant& rescaling,
                        const RenderAreaPushConstant& render_are);
 
@@ -521,6 +532,8 @@ private:
 
     DescriptorBufferLayout descriptor_buffer_layout;
     std::vector<DescriptorUpdateEntry> last_descriptor_payload;
+    bool uses_host_viewport{};
+    std::array<f32, 4> host_viewport_words{};
     VkDeviceSize last_descriptor_buffer_offset{};
     u32 last_descriptor_buffer_chunk{};
     u64 last_descriptor_buffer_generation{};

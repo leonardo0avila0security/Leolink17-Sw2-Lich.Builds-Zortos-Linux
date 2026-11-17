@@ -1673,6 +1673,143 @@ VkImageView TextureCacheRuntime::ResolveColorFeedback(const ImageView& sampled,
     return *snapshot->view;
 }
 
+VkImageView TextureCacheRuntime::FeedbackCopyView(const ImageView& view,
+                                                  Shader::TextureType type) {
+    using Shader::TextureType;
+    const Image* const image = view.BackingImage();
+    if ((type != TextureType::Color2D && type != TextureType::ColorArray2D) || !image ||
+        !view.CanFeedbackCopy(*image)) {
+        return VK_NULL_HANDLE;
+    }
+    const VkImage source = view.ImageHandle();
+    const VkFormat format = view.HostFormat();
+    const VkExtent2D extent{image->info.size.width, image->info.size.height};
+
+    auto it = std::ranges::find(feedback_copies, source, &FeedbackCopy::source);
+    if (it != feedback_copies.end() &&
+        (it->format != format || it->extent.width != extent.width ||
+         it->extent.height != extent.height)) {
+        pending_feedback_copies.push_back(std::move(*it));
+        feedback_copies.erase(it);
+        it = feedback_copies.end();
+    }
+    if (it == feedback_copies.end()) {
+        FeedbackCopy created;
+        created.source = source;
+        created.format = format;
+        created.extent = extent;
+        created.image = memory_allocator.CreateImage(VkImageCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = format,
+            .extent = {extent.width, extent.height, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = nullptr,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        });
+        feedback_copies.push_back(std::move(created));
+        it = std::prev(feedback_copies.end());
+    }
+    FeedbackCopy& copy = *it;
+    const VkComponentMapping& swizzle = view.Swizzle();
+    auto view_it = std::ranges::find_if(copy.views, [&](const FeedbackView& existing) {
+        return existing.type == type && existing.swizzle.r == swizzle.r &&
+               existing.swizzle.g == swizzle.g && existing.swizzle.b == swizzle.b &&
+               existing.swizzle.a == swizzle.a;
+    });
+    if (view_it == copy.views.end()) {
+        copy.views.push_back(FeedbackView{type, swizzle, view.MakeFeedbackView(*copy.image, type)});
+        view_it = std::prev(copy.views.end());
+    }
+    const VkImageView result = *view_it->view;
+    copy.unused_frames = 0;
+    copy.tick = scheduler.CurrentTick();
+
+    const VkImage destination = *copy.image;
+    scheduler.RequestOutsideRenderPassOperationContext();
+    scheduler.Record([source, destination, extent](vk::CommandBuffer cmdbuf) {
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        const std::array pre{
+            VkImageMemoryBarrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                 VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = source,
+                .subresourceRange = range,
+            },
+            VkImageMemoryBarrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = destination,
+                .subresourceRange = range,
+            },
+        };
+        const std::array post{
+            VkImageMemoryBarrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = 0,
+                .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                                 VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                 VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = source,
+                .subresourceRange = range,
+            },
+            VkImageMemoryBarrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = destination,
+                .subresourceRange = range,
+            },
+        };
+        const VkImageCopy region{
+            .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+            .srcOffset = {0, 0, 0},
+            .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+            .dstOffset = {0, 0, 0},
+            .extent = {extent.width, extent.height, 1},
+        };
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0, nullptr, nullptr, pre);
+        cmdbuf.CopyImage(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                               0, nullptr, nullptr, post);
+    });
+    return result;
+}
+
 ByteAddressedShadow TextureCacheRuntime::CreateByteAddressedShadow(const ImageView& view) {
     const auto* image{view.BackingImage()};
     const auto extent{PackedByteAddressedExtent(view.size.width, view.size.height)};
@@ -2066,10 +2203,15 @@ bool TextureCacheRuntime::UpscaleWithFsr3(Framebuffer* dst_framebuffer, ImageVie
             fsr3_unsupported = true;
             return false;
         }
+        // The Xenoblade Switch 2 Editions give standard depth (far reads 1) and tonemapped colour:
+        // Ocarina of Time's profile, with unit exposure.
+        const bool ldr_profile = Settings::values.nx2_dlss_to_fsr;
         try {
-            fsr3_upscaler = std::make_unique<Fsr3Upscaler>(device, scheduler, memory_allocator,
-                                                           staging_buffer_pool, descriptor_pool,
-                                                           compute_pass_descriptor_queue);
+            fsr3_upscaler = std::make_unique<Fsr3Upscaler>(
+                device, scheduler, memory_allocator, staging_buffer_pool, descriptor_pool,
+                compute_pass_descriptor_queue,
+                ldr_profile ? Fsr3Upscaler::Profile::OcarinaLdr
+                            : Fsr3Upscaler::Profile::HdrReversedDepth);
         } catch (const vk::Exception& exception) {
             LOG_ERROR(Render_Vulkan, "FSR 3.1 failed to start ({}); using the temporal stand-in",
                       exception.what());
@@ -2222,6 +2364,9 @@ bool TextureCacheRuntime::UpscaleWithDlss(Framebuffer* dst_framebuffer, ImageVie
             .motion_vector_scale = {motion_scale[0] * static_cast<f32>(render_size[0]),
                                     motion_scale[1] * static_cast<f32>(render_size[1])},
             .reset = reset,
+            // Xenoblade's depth is standard (far reads 1) and its colour tonemapped.
+            .depth_inverted = !Settings::values.nx2_dlss_to_fsr,
+            .hdr = !Settings::values.nx2_dlss_to_fsr,
         });
     } catch (const vk::Exception& exception) {
         LOG_WARNING(Render_Vulkan, "NVIDIA DLSS evaluation unavailable ({}); using FSR 3.1",
@@ -2292,8 +2437,12 @@ bool TextureCacheRuntime::TemporalUpscale(Framebuffer* dst_framebuffer, ImageVie
                         !same_size(motion_vectors))) {
         return false;
     }
-    if (use_history && depth && (!plain(*depth) || !fits(*depth, render_size) ||
-                                depth->format != PixelFormat::D32_FLOAT || !same_size(*depth))) {
+    // D32 with stencil (Xenoblade Chronicles 2) goes to FSR through its depth-only view.
+    if (use_history && depth &&
+        (!plain(*depth) || !fits(*depth, render_size) ||
+         (depth->format != PixelFormat::D32_FLOAT &&
+          depth->format != PixelFormat::D32_FLOAT_S8_UINT) ||
+         !same_size(*depth))) {
         return false;
     }
     if (use_history && depth && UpscaleWithFsr3(dst_framebuffer, input_color, motion_vectors, *depth, render_size,
@@ -3194,6 +3343,12 @@ void TextureCacheRuntime::TickFrame() {
     });
     std::erase_if(pending_resolve_shadows, [this](const auto& pending) {
         return scheduler.IsFree(pending.first);
+    });
+    std::erase_if(pending_feedback_copies, [this](const FeedbackCopy& pending) {
+        return scheduler.IsFree(pending.tick);
+    });
+    std::erase_if(feedback_copies, [this](FeedbackCopy& copy) {
+        return ++copy.unused_frames > MAX_UNUSED_SCRATCH_FRAMES && scheduler.IsFree(copy.tick);
     });
 }
 
@@ -4638,6 +4793,8 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
                   info.IsRenderTarget());
     }
     requires_border_color_format = NeedsExplicitBorderColorFormat(format_info.format);
+    view_vk_format = format_info.format;
+    view_aspect = aspect_mask;
     swizzle_mapping = VkComponentMapping{
         .r = ComponentSwizzle(swizzle[0]),
         .g = ComponentSwizzle(swizzle[1]),
@@ -4823,6 +4980,35 @@ VkImageView ImageView::StorageView(Shader::TextureType texture_type,
 
 bool ImageView::IsRescaled() const noexcept {
     return (*slot_images)[image_id].IsRescaled();
+}
+
+bool ImageView::CanFeedbackCopy(const Image& image) const noexcept {
+    return image_handle != VK_NULL_HANDLE && view_vk_format != VK_FORMAT_UNDEFINED &&
+           view_aspect == VK_IMAGE_ASPECT_COLOR_BIT && samples == VK_SAMPLE_COUNT_1_BIT &&
+           type == VideoCommon::ImageViewType::e2D && size.depth == 1 &&
+           range.base.level == 0 && range.base.layer == 0 && range.extent.levels == 1 &&
+           range.extent.layers == 1 && format == image.info.format &&
+           image.info.num_samples == 1 && image.host_level_offset == 0 &&
+           !image.info.is_sparse && !image.IsRescaled();
+}
+
+vk::ImageView ImageView::MakeFeedbackView(VkImage image, Shader::TextureType texture_type) const {
+    return device->GetLogical().CreateImageView(VkImageViewCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .image = image,
+        .viewType = ImageViewType(texture_type),
+        .format = view_vk_format,
+        .components = swizzle_mapping,
+        .subresourceRange{
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+    });
 }
 
 vk::ImageView ImageView::MakeView(VkFormat vk_format, VkImageAspectFlags aspect_mask,

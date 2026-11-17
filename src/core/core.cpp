@@ -458,6 +458,7 @@ struct System::Impl {
         if (params.launch_type == Service::AM::LaunchType::FrontendInitiated) {
             fs_controller.InitTempStorage();
         }
+        FileSys::SetBootContent({});
 
         const std::optional<u64> switch2_program_id =
             virtual_filesystem != nullptr
@@ -665,6 +666,7 @@ struct System::Impl {
         service_manager.reset();
         fs_controller.Reset();
         core_timing.ClearPendingEvents();
+        FileSys::SetBootContent({});
         app_loader.reset();
         Common::NoteShutdownProgress();
         audio_core.reset();

@@ -26,6 +26,7 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/swap.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/file_sys/vfs/vfs_offset.h"
 
 namespace FileSys {
@@ -856,6 +857,54 @@ std::optional<std::size_t> NupContainer::FindPackage(PackageKind kind,
 
 std::optional<std::size_t> NupContainer::FindBasePackage() const {
     return FindPackage(PackageKind::Base);
+}
+
+std::vector<std::size_t> NupContainer::FindAddonPackages(u64 program_id) const {
+    const u64 base = GetBaseTitleID(program_id);
+    const u64 switch1_base = GetSwitch1ApplicationID(base);
+    std::map<u64, std::size_t> selected;
+    for (std::size_t i = 0; i < packages.size(); ++i) {
+        const auto& package = packages[i];
+        const u64 package_base = GetBaseTitleID(package.title_id);
+        if (package.kind != PackageKind::Addon ||
+            (package_base != base && package_base != switch1_base) ||
+            package.romfs_dir == NoDir) {
+            continue;
+        }
+        // Keyed on the Switch 1 form: a 0100... and a 0400... package of the same add-on are one
+        // title, the newest version wins.
+        const u64 title_id = GetSwitch1ApplicationID(package.title_id);
+        const auto it = selected.find(title_id);
+        if (it == selected.end() || package.version > packages[it->second].version) {
+            selected[title_id] = i;
+        }
+    }
+    std::vector<std::size_t> indices;
+    for (const auto& entry : selected) {
+        indices.push_back(entry.second);
+    }
+    return indices;
+}
+
+std::vector<std::pair<u64, VirtualDir>> NupContainer::GetSiblingProgramRomFS() {
+    std::vector<std::pair<u64, VirtualDir>> entries;
+    // The first base package is the application itself; further ones are its other programs.
+    const auto main = FindBasePackage();
+    if (!main) {
+        return entries;
+    }
+    const u64 application = GetBaseTitleID(packages[*main].title_id);
+    for (std::size_t i = *main + 1; i < packages.size(); ++i) {
+        if (packages[i].kind != PackageKind::Base ||
+            GetBaseTitleID(packages[i].title_id) != application) {
+            continue;
+        }
+        if (auto romfs = GetRomFSDir(i)) {
+            LOG_INFO(Loader, "NUP sibling program {:016X} mounted", packages[i].title_id);
+            entries.emplace_back(packages[i].title_id, std::move(romfs));
+        }
+    }
+    return entries;
 }
 
 std::optional<std::size_t> NupContainer::FindBestUpdatePackage() const {

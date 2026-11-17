@@ -46,6 +46,7 @@ struct HostTranslateInfo {
                                         ///< control flow
     bool single_lane_geometry_subgroups{};
     bool support_byte_addressed_r16{};
+    bool reconstruct_position_varyings{};
     /// True when a handle read from a table at a per-invocation index may become a descriptor
     /// array of the table's entries (not OpenGL: its pipelines bind at most 64 textures; Vulkan
     /// only with nonuniform sampled image array indexing)

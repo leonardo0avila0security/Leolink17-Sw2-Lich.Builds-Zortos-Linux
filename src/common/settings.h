@@ -1140,6 +1140,9 @@ struct Values {
     /// A title that breaks when buffers miss the GPU engines' inner writes keeps those
     /// invalidations whatever skip_cpu_inner_invalidation says. Set per boot by the game overrides.
     bool keep_cpu_inner_invalidation{};
+    /// Per boot, from the game overrides: the tensor-core passes of an NVN2 DLSS evaluation are
+    /// skipped and its output upscaled with FSR 3.1 from the evaluation's inputs.
+    bool nx2_dlss_to_fsr{};
 
 };
 

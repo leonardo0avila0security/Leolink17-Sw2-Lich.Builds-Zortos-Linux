@@ -64,6 +64,7 @@
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_query_cache.h"
+#include "video_core/renderer_vulkan/surface_clip_viewport.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
@@ -343,6 +344,15 @@ void RecordDispatchBarrier(vk::CommandBuffer cmdbuf) {
                            0, READ_BARRIER);
 }
 } // Anonymous namespace
+
+std::array<f32, 4> GetHostViewport0(const Device& device, const Maxwell& regs, bool is_rescaling) {
+    if (!regs.viewport_scale_offset_enabled) {
+        return GetSurfaceClipViewport(regs);
+    }
+    const float scale = is_rescaling ? Settings::values.resolution_info.up_factor : 1.0f;
+    const VkViewport viewport{GetViewportState(device, regs, 0, scale)};
+    return {viewport.x, viewport.y, viewport.width, viewport.height};
+}
 
 /// Reads back the mesh emulation's output for the probe frame and logs how many primitives of
 /// PrimitiveVertices() indices it holds: unused slots, primitives with every vertex off screen
@@ -2437,12 +2447,14 @@ void RasterizerVulkan::DispatchCompute() {
     };
     const auto indirect_address = kepler_compute->GetIndirectComputeAddress();
     const auto list_slot = kepler_compute->GetIndirectListSlot();
-    const bool can_replace =
-        OcarinaTemporalEnabled() &&
-        VideoCommon::FindOcarinaUpscalePass(native_key, pipeline->ShaderHash()) !=
-            VideoCommon::OcarinaUpscalePass::None &&
-        pipeline->CanReplaceOcarinaUpscale() && !indirect_address && !list_slot &&
-        !frame_dump.Capturing();
+    // The full-size 1080p pass is replaced only by FSR (native AA); DLAA through it is untested.
+    const auto oot_pass = VideoCommon::FindOcarinaUpscalePass(native_key, pipeline->ShaderHash());
+    const bool can_replace = OcarinaTemporalEnabled() &&
+                             oot_pass != VideoCommon::OcarinaUpscalePass::None &&
+                             pipeline->CanReplaceOcarinaUpscale() &&
+                             (oot_pass != VideoCommon::OcarinaUpscalePass::FullSize ||
+                              oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr) &&
+                             !indirect_address && !list_slot && !frame_dump.Capturing();
     // Until a dispatch overwrites the scene, each direct one binds only after the effects are
     // marked. The indirect path records its bind at once.
     const bool marking_effects = oot_effects_frame == render_trace_frame &&
@@ -3706,26 +3718,21 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
     const auto extent = oot_motion.extent;
     using enum VideoCommon::OcarinaUpscalePass;
     const auto pass = VideoCommon::FindOcarinaUpscalePass(native_key, pipeline.ShaderHash());
-    const bool target_1440p = target.size.width == 2560 && target.size.height == 1440;
+    const bool native_size = pass == FullSize;
     // At the DLSS Performance render scale (1920x1080) the game upscales to 2560x1440 with its
     // 3/4 pass instead (QuincyForbes' f7d0938b5b). The scale is the one the game started with,
     // whatever quality is chosen since.
-    const bool pass_1440p = target_1440p && (pass == OneToOne || pass == Scaled ||
-                                             (pass == ThreeQuarter && oot_performance_scale));
-    // Handheld with the Max Resolution add-on: FSR runs as native AA. DLAA through it is untested.
-    const bool native_size = pass == OneToOne && !target_1440p;
-    if (native_size && oot_backend != VideoCommon::OcarinaUpscaleBackend::Fsr) {
-        return fail("the full-size pass is replaced only by FSR");
-    }
+    const bool three_quarter_1440p = pass == ThreeQuarter &&
+                                     oot_performance_scale && target.size.width == 2560 &&
+                                     target.size.height == 1440;
+    const bool pass_1440p = pass == Pass1440p || three_quarter_1440p;
     const bool upscale_4k = pass_1440p && !native_resolution;
-    // The 1440p and scaled passes take any 16:9 scene up to their target: the DLSS render scales
-    // shrink it docked, and the game's dynamic resolution handheld (854x480 at its floor).
-    const bool scaled_scene = extent.width <= target.size.width &&
-                              extent.height <= target.size.height &&
-                              std::abs(static_cast<int>(extent.width * 9) -
-                                       static_cast<int>(extent.height * 16)) <= 32;
+    // The 1440p pass takes any 16:9 scene up to 2560x1440: the DLSS render scales shrink it.
     const bool valid_extents =
-        pass_1440p || pass == Scaled ? scaled_scene
+        pass_1440p ? extent.width <= 2560 && extent.height <= 1440 &&
+                         std::abs(static_cast<int>(extent.width * 9) -
+                                  static_cast<int>(extent.height * 16)) <= 32 &&
+                         target.size.width == 2560 && target.size.height == 1440
         : native_size ? target.size.width == extent.width && target.size.height == extent.height
                       : target.size.width == extent.width * 4 / 3 &&
                             target.size.height == extent.height * 4 / 3;
@@ -4218,20 +4225,13 @@ bool AccelerateDMA::BufferClear(GPUVAddr src_address, u64 amount, u32 value) {
 }
 
 bool AccelerateDMA::BufferCopy(GPUVAddr src_address, GPUVAddr dest_address, u64 amount) {
-    std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
+    std::scoped_lock lock{buffer_cache.mutex};
     buffer_cache.Nx2CollectListCopies(true);
-    boost::container::small_vector<std::pair<DAddr, size_t>, 4> gpu_written;
-    const bool copied = buffer_cache.DMACopy(src_address, dest_address, amount, &gpu_written);
+    const bool copied = buffer_cache.DMACopy(src_address, dest_address, amount);
     if (buffer_cache.Nx2CopyListPages(scheduler.CurrentTick())) {
         scheduler.Flush();
     }
     buffer_cache.Nx2CollectListCopies(false);
-    // DMACopy copies guest memory without telling the texture cache. Images over the destination
-    // (pitch linear data textures such as Kirby Air Riders' vertex lighting) would keep their old
-    // contents, and stale pages would skip the upload of images made there later.
-    if (copied) {
-        texture_cache.WriteDmaCopy(src_address, dest_address, amount, gpu_written);
-    }
     return copied;
 }
 
@@ -4426,19 +4426,12 @@ void RasterizerVulkan::UpdateViewportsState(Tegra::Engines::Maxwell3D::Regs& reg
     maxwell3d->dirty.flags[Dirty::Scissors] = true;
 
     if (!regs.viewport_scale_offset_enabled) {
-        float x = static_cast<float>(regs.surface_clip.x);
-        float y = static_cast<float>(regs.surface_clip.y);
-        float width = (std::max)(1.0f, static_cast<float>(regs.surface_clip.width));
-        float height = (std::max)(1.0f, static_cast<float>(regs.surface_clip.height));
-        if (regs.window_origin.mode != Maxwell::WindowOrigin::Mode::UpperLeft) {
-            y += height;
-            height = -height;
-        }
+        const auto surface_viewport = GetSurfaceClipViewport(regs);
         VkViewport viewport{
-            .x = x + oot_jitter_applied[0],
-            .y = y + oot_jitter_applied[1],
-            .width = width,
-            .height = height,
+            .x = surface_viewport[0] + oot_jitter_applied[0],
+            .y = surface_viewport[1] + oot_jitter_applied[1],
+            .width = surface_viewport[2],
+            .height = surface_viewport[3],
             .minDepth = 0.0f,
             .maxDepth = 1.0f,
         };
@@ -4534,14 +4527,9 @@ void RasterizerVulkan::UpdateScissorsState(Tegra::Engines::Maxwell3D::Regs& regs
 }
 
 void RasterizerVulkan::UpdateDepthBias(Tegra::Engines::Maxwell3D::Regs& regs) {
-    // The slope term is per pixel, so a rescaled viewport needs it scaled back to guest pixels.
-    const float slope_scale = texture_cache.IsRescaling() && regs.viewport_scale_offset_enabled
-                                  ? Settings::values.resolution_info.up_factor
-                                  : 1.0f;
-    if (!state_tracker.TouchDepthBias() && slope_scale == depth_bias_slope_scale) {
+    if (!state_tracker.TouchDepthBias()) {
         return;
     }
-    depth_bias_slope_scale = slope_scale;
     float units = regs.depth_bias / 2.0f;
     const bool is_d24 = regs.zeta.format == Tegra::DepthFormat::Z24_UNORM_S8_UINT ||
                         regs.zeta.format == Tegra::DepthFormat::X8Z24_UNORM ||
@@ -4565,7 +4553,7 @@ void RasterizerVulkan::UpdateDepthBias(Tegra::Engines::Maxwell3D::Regs& regs) {
         }
     }
     float clamp = regs.depth_bias_clamp;
-    float factor = regs.slope_scale_depth_bias * slope_scale;
+    float factor = regs.slope_scale_depth_bias;
     if (far_plane_draw) {
         const bool reversed =
             regs.viewport_scale_offset_enabled && regs.viewport_transform[0].scale_z < 0.0f;

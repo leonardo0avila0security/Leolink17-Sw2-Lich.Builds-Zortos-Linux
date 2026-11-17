@@ -3,6 +3,8 @@
 #pragma once
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "common/common_types.h"
 #include "core/file_sys/vfs/vfs_types.h"
@@ -31,6 +33,19 @@ enum class StorageId : u8 {
     NandUser = 4,
     SdCard = 5,
 };
+
+// Content of the booted title that has no NCA in the content provider (NUP containers): the other
+// programs of a multi-program application, keyed by the title ID of their program index (Switch 2
+// Editions run index 1 and read index 0 through OpenDataStorageWithProgramIndex). Every boot
+// replaces the whole set; RomFS images are built on first open.
+struct BootContent {
+    u64 title_id{};
+    ContentRecordType type{};
+    VirtualDir romfs;
+};
+void SetBootContent(std::vector<BootContent> entries);
+/// The registered RomFS for a title ID and type, built on first use, or nullptr.
+[[nodiscard]] VirtualFile OpenBootContent(u64 title_id, ContentRecordType type);
 
 /// File system interface to the RomFS archive
 class RomFSFactory {

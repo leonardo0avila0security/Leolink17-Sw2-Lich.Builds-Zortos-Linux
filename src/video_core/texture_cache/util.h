@@ -39,6 +39,12 @@ struct OverlapResult {
     SubresourceExtent resources;
 };
 
+/// Switch 2 block-linear surfaces swap GOB offset bits 5 and 6, unless their texture header asks
+/// for the Maxwell GOB layout (ImageInfo::maxwell_gobs).
+[[nodiscard]] constexpr bool UsesNativeGobs(bool native_memory, const ImageInfo& info) {
+    return native_memory && !info.maxwell_gobs;
+}
+
 [[nodiscard]] u32 CalculateGuestSizeInBytes(const ImageInfo& info) noexcept;
 
 [[nodiscard]] u32 CalculateUnswizzledSizeBytes(const ImageInfo& info) noexcept;
@@ -94,6 +100,7 @@ struct UnswizzlePlan {
     size_t total_host_bytes{0};
     u32 bpp_log2{0};
     bool layout_valid{true};
+    bool maxwell_gobs{false};
 };
 
 /// Plans the unswizzle copies and runs for a 2D block-linear image overlapping `dirty_ranges`.
@@ -105,10 +112,6 @@ struct UnswizzlePlan {
 /// Executes a precalculated unswizzle plan directly into destination memory (e.g. mapped staging span).
 void ExecuteUnswizzlePlan(Tegra::MemoryManager& gpu_memory, const UnswizzlePlan& plan,
                          std::span<u8> output);
-
-/// Reads one byte of each 4 KiB page of a guest range about to be read in full, on the texture
-/// workers and this thread at once (Windows only, ranges of 1 MiB or more).
-void PrefaultGuestMemory(Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, size_t size);
 
 [[nodiscard]] boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(
     Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, const ImageInfo& info,

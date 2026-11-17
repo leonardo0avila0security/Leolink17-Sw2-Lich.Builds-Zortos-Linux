@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -57,6 +58,7 @@ namespace {
 using boost::container::small_vector;
 using boost::container::static_vector;
 using Shader::ImageBufferDescriptor;
+using Shader::Backend::SPIRV::HOST_VIEWPORT_LAYOUT_OFFSET;
 using Shader::Backend::SPIRV::RENDERAREA_LAYOUT_OFFSET;
 using Shader::Backend::SPIRV::RESCALING_LAYOUT_DOWN_FACTOR_OFFSET;
 using Shader::Backend::SPIRV::RESCALING_LAYOUT_WORDS_OFFSET;
@@ -407,6 +409,7 @@ GraphicsPipeline::GraphicsPipeline(
             continue;
         }
         stage_infos[stage] = *info;
+        uses_host_viewport |= info->uses_host_viewport;
         enabled_uniform_buffer_masks[stage] = info->constant_buffer_mask;
         std::ranges::copy(info->constant_buffer_used_sizes, uniform_buffer_sizes[stage].begin());
         num_image_elements += Shader::NumDescriptors(info->texture_buffer_descriptors);
@@ -732,6 +735,18 @@ void GraphicsPipeline::AddTransition(GraphicsPipeline* transition) {
     transition_keys.push_back(transition->key);
     transitions.push_back(transition);
 }
+
+namespace {
+/// EDEN_NX2_FB_COPY=1: a draw that samples a colour target it also writes reads a copy of it.
+/// AMD can return wrong texels for an image sampled while it is rendered to (blocks of 64 px).
+bool FeedbackCopyEnabled() {
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_NX2_FB_COPY");
+        return value != nullptr && value[0] != 0 && value[0] != '0';
+    }();
+    return enabled;
+}
+} // namespace
 
 template <typename Spec>
 bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
@@ -1176,6 +1191,8 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
 
     RescalingPushConstant rescaling;
     RenderAreaPushConstant render_area;
+    std::array<size_t, NUM_STAGES> texture_entries;
+    texture_entries.fill((std::numeric_limits<size_t>::max)());
     const VideoCommon::SamplerId* samplers_it{samplers.data()};
     const VideoCommon::ImageViewInOut* views_it{views.data()};
     size_t fragment_entry{};
@@ -1190,6 +1207,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             if (stage == 4) {
                 fragment_entry = first_entry;
             }
+            texture_entries[stage] = first_entry;
             PushImageDescriptors(texture_cache, guest_descriptor_queue, stage_infos[stage],
                                  rescaling, samplers_it, views_it);
             if (captured_delta) {
@@ -1249,12 +1267,18 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     {
         Profile::Scope scope{Profile::Zone::RenderTargets};
         texture_cache.UpdateRenderTargets(false);
+        if (uses_host_viewport) {
+            host_viewport_words = GetHostViewport0(device, regs, texture_cache.IsRescaling());
+        }
         const std::span<const VideoCommon::ImageViewInOut> view_span{views.data(), views.size()};
         texture_cache.CheckFeedbackLoop(view_span);
         CheckColorFeedbackLoop(view_span, Spec::enabled_stages, fragment_entry);
         if (scheduler.HasFragmentBarrier() &&
             (scheduler.RenderPassHasStores() || texture_cache.SamplesRenderTarget(view_span))) {
             scheduler.RequestOutsideRenderPassOperationContext();
+        }
+        if (FeedbackCopyEnabled() && texture_cache.SamplesRenderTarget(view_span)) {
+            PatchFeedbackSamples(view_span, texture_entries);
         }
     }
     if (IsBuilt() && (!pipeline || build->Failed())) {
@@ -1340,6 +1364,8 @@ bool GraphicsPipeline::ConfigureDelta(bool is_indexed) {
     const auto& regs{maxwell3d->regs};
     RescalingPushConstant rescaling;
     RenderAreaPushConstant render_area;
+    std::array<size_t, NUM_STAGES> texture_entries;
+    texture_entries.fill((std::numeric_limits<size_t>::max)());
     const VideoCommon::SamplerId* samplers_it{delta_samplers.data()};
     const VideoCommon::ImageViewInOut* views_it{delta_views.data()};
     size_t fragment_entry{};
@@ -1373,10 +1399,12 @@ bool GraphicsPipeline::ConfigureDelta(bool is_indexed) {
         if (replay_images) {
             Profile::Scope scope{Profile::Zone::PushDescriptors};
             const auto [first, count] = kept_image_ranges[stage];
+            texture_entries[stage] = guest_descriptor_queue.UpdateCount();
             guest_descriptor_queue.AddEntries({kept_image_entries.data() + first, count});
         } else {
             Profile::Scope scope{Profile::Zone::PushDescriptors};
             const size_t first_entry = guest_descriptor_queue.UpdateCount();
+            texture_entries[stage] = first_entry;
             PushImageDescriptors(texture_cache, guest_descriptor_queue, stage_infos[stage],
                                  rescaling, samplers_it, views_it);
             KeepImageDescriptors(stage, first_entry);
@@ -1424,6 +1452,9 @@ bool GraphicsPipeline::ConfigureDelta(bool is_indexed) {
     {
         Profile::Scope scope{Profile::Zone::RenderTargets};
         texture_cache.UpdateRenderTargets(false);
+        if (uses_host_viewport) {
+            host_viewport_words = GetHostViewport0(device, regs, texture_cache.IsRescaling());
+        }
         const std::span<const VideoCommon::ImageViewInOut> view_span{delta_views};
         texture_cache.CheckFeedbackLoop(view_span);
         CheckColorFeedbackLoop(view_span, configured_stages, fragment_entry);
@@ -1431,12 +1462,53 @@ bool GraphicsPipeline::ConfigureDelta(bool is_indexed) {
             (scheduler.RenderPassHasStores() || texture_cache.SamplesRenderTarget(view_span))) {
             scheduler.RequestOutsideRenderPassOperationContext();
         }
+        if (FeedbackCopyEnabled() && texture_cache.SamplesRenderTarget(view_span)) {
+            PatchFeedbackSamples(view_span, texture_entries);
+        }
     }
     if (IsBuilt() && (!pipeline || build->Failed())) {
         return false;
     }
     Profile::Scope scope{Profile::Zone::ConfigureDraw};
     return ConfigureDraw(rescaling, render_area);
+}
+
+void GraphicsPipeline::PatchFeedbackSamples(std::span<const VideoCommon::ImageViewInOut> views,
+                                            const std::array<size_t, NUM_STAGES>& texture_entries) {
+    size_t view_index{};
+    for (size_t stage = 0; stage < NUM_STAGES; ++stage) {
+        const size_t first_entry = texture_entries[stage];
+        if (first_entry == (std::numeric_limits<size_t>::max)()) {
+            continue;
+        }
+        const Shader::Info& info{stage_infos[stage]};
+        view_index += Shader::NumDescriptors(info.texture_buffer_descriptors);
+        view_index += Shader::NumDescriptors(info.image_buffer_descriptors);
+        size_t entry = first_entry;
+        for (const auto& desc : info.texture_descriptors) {
+            for (u32 index = 0; index < desc.count; ++index, ++entry, ++view_index) {
+                if (view_index >= views.size()) {
+                    return;
+                }
+                const VideoCommon::ImageViewId id{views[view_index].id};
+                if (desc.is_depth || !texture_cache.IsColorRenderTargetView(id)) {
+                    continue;
+                }
+                const ImageView& sampled = texture_cache.GetImageView(id);
+                // Already pointed at a snapshot (CheckColorFeedbackLoop) or a fallback view.
+                if (guest_descriptor_queue.UpdateData()[entry].image.imageView !=
+                    sampled.Handle(desc.type)) {
+                    continue;
+                }
+                const VkImageView copy =
+                    texture_cache.GetRuntime().FeedbackCopyView(sampled, desc.type);
+                if (copy != VK_NULL_HANDLE) {
+                    guest_descriptor_queue.ReplaceSampledImage(entry, copy);
+                }
+            }
+        }
+        view_index += Shader::NumDescriptors(info.image_descriptors);
+    }
 }
 
 void GraphicsPipeline::KeepImageDescriptors(size_t stage, size_t first_entry) {
@@ -1720,7 +1792,9 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
                       descriptor_buffer_offset, descriptor_buffer_chunk, bind_descriptor_buffer,
                       rescaling_data = rescaling.Data(), is_rescaling, update_rescaling,
                       uses_render_area = render_area.uses_render_area,
-                      render_area_data = render_area.words](vk::CommandBuffer cmdbuf) {
+                      render_area_data = render_area.words,
+                      push_host_viewport = uses_host_viewport,
+                      host_viewport = host_viewport_words](vk::CommandBuffer cmdbuf) {
         if (bind_descriptor_buffer) {
             const VkDescriptorBufferBindingInfoEXT binding_info{
                 descriptor_buffer_ring.BindingInfo(descriptor_buffer_chunk)};
@@ -1751,6 +1825,10 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         if (uses_render_area) {
             cmdbuf.PushConstants(*pipeline_layout, push_stages, RENDERAREA_LAYOUT_OFFSET,
                                  sizeof(render_area_data), &render_area_data);
+        }
+        if (push_host_viewport) {
+            cmdbuf.PushConstants(*pipeline_layout, push_stages, HOST_VIEWPORT_LAYOUT_OFFSET,
+                                 sizeof(host_viewport), host_viewport.data());
         }
         if (!descriptor_set_layout) {
             return;

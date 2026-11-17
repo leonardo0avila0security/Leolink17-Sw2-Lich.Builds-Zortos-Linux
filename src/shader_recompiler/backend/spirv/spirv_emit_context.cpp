@@ -1567,18 +1567,18 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
 }
 
 void EmitContext::DefineRescalingInput(const Info& info) {
-    if (!info.uses_rescaling_uniform) {
+    if (!info.uses_rescaling_uniform && !info.uses_host_viewport) {
         return;
     }
     if (profile.unified_descriptor_binding) {
-        DefineRescalingInputPushConstant();
+        DefineRescalingInputPushConstant(info);
     } else {
         DefineRescalingInputUniformConstant();
     }
 }
 
-void EmitContext::DefineRescalingInputPushConstant() {
-    boost::container::static_vector<Id, 3> members{};
+void EmitContext::DefineRescalingInputPushConstant(const Info& info) {
+    boost::container::static_vector<Id, 4> members{};
     u32 member_index{0};
 
     rescaling_textures_type = TypeArray(U32[1], Const(4u));
@@ -1594,6 +1594,10 @@ void EmitContext::DefineRescalingInputPushConstant() {
     if (stage != Stage::Compute) {
         members.push_back(F32[1]);
         rescaling_downfactor_member_index = member_index++;
+    }
+    if (info.uses_host_viewport) {
+        members.push_back(F32[4]);
+        host_viewport_member_index = member_index++;
     }
     const Id push_constant_struct{TypeStruct(std::span(members.data(), members.size()))};
     Decorate(push_constant_struct, spv::Decoration::Block);
@@ -1612,6 +1616,11 @@ void EmitContext::DefineRescalingInputPushConstant() {
                        spv::Decoration::Offset,
                        static_cast<u32>(offsetof(RescalingLayout, down_factor)));
         MemberName(push_constant_struct, rescaling_downfactor_member_index, "down_factor");
+    }
+    if (info.uses_host_viewport) {
+        MemberDecorate(push_constant_struct, host_viewport_member_index, spv::Decoration::Offset,
+                       HOST_VIEWPORT_LAYOUT_OFFSET);
+        MemberName(push_constant_struct, host_viewport_member_index, "host_viewport");
     }
     const Id pointer_type{TypePointer(spv::StorageClass::PushConstant, push_constant_struct)};
     rescaling_push_constants = AddGlobalVariable(pointer_type, spv::StorageClass::PushConstant);

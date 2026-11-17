@@ -249,6 +249,11 @@ public:
 
     VkImageView ResolveColorFeedback(const ImageView& sampled, const ImageView& attachment);
 
+    /// For a draw that samples a colour target it also writes (EDEN_NX2_FB_COPY): copies the
+    /// image as it is now, outside the render pass, and returns a view of the copy that has the
+    /// sampled view's format and swizzle. VK_NULL_HANDLE when the view can't be copied.
+    [[nodiscard]] VkImageView FeedbackCopyView(const ImageView& view, Shader::TextureType type);
+
     bool IsFormatDitherable(VideoCore::Surface::PixelFormat format);
     bool IsFormatScalable(VideoCore::Surface::PixelFormat format);
 
@@ -354,6 +359,23 @@ public:
         u64 tick;
         u32 unused_frames;
     };
+
+    struct FeedbackView {
+        Shader::TextureType type;
+        VkComponentMapping swizzle;
+        vk::ImageView view;
+    };
+    struct FeedbackCopy {
+        VkImage source{};
+        VkFormat format{};
+        VkExtent2D extent{};
+        vk::Image image;
+        std::vector<FeedbackView> views;
+        u64 tick{};
+        u32 unused_frames{};
+    };
+    std::vector<FeedbackCopy> feedback_copies;
+    std::vector<FeedbackCopy> pending_feedback_copies;
 
     std::vector<MsaaScratchImage> msaa_scratch_images;
     ::Common::unordered_map<VkImage, ResolveShadow> resolve_shadows;
@@ -808,6 +830,17 @@ public:
         return buffer_size;
     }
 
+    /// Whether the view is a single colour subresource of a 2D image that
+    /// TextureCacheRuntime::FeedbackCopyView can copy.
+    [[nodiscard]] bool CanFeedbackCopy(const Image& image) const noexcept;
+
+    /// A view of `image` (a copy of this view's image) with this view's format and swizzle.
+    [[nodiscard]] vk::ImageView MakeFeedbackView(VkImage image, Shader::TextureType type) const;
+
+    [[nodiscard]] VkFormat HostFormat() const noexcept {
+        return view_vk_format;
+    }
+
 private:
     struct StorageViews {
         std::array<std::array<vk::ImageView, Shader::NUM_TEXTURE_TYPES>,
@@ -833,6 +866,8 @@ private:
     u32 buffer_size = 0;
 
     VkComponentMapping swizzle_mapping{};
+    VkFormat view_vk_format = VK_FORMAT_UNDEFINED;
+    VkImageAspectFlags view_aspect = 0;
 
     bool supports_depth_comparison = false;
     bool requires_border_color_format = false;

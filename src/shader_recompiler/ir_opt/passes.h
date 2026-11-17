@@ -28,6 +28,7 @@ void GlobalMemoryToStorageBufferPass(Environment& env, IR::Program& program,
 /// descriptor set limit is lower
 size_t StorageBufferLimit(const HostTranslateInfo& host_info);
 void IdentityRemovalPass(IR::Program& program);
+void PositionVaryingPass(IR::Program& vertex, IR::Program& fragment);
 void LowerFp64ToFp32(IR::Program& program);
 void LowerFp16ToFp32(IR::Program& program);
 void LowerInt64ToInt32(IR::Program& program);

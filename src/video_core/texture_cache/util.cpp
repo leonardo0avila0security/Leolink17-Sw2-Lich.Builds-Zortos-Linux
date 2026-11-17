@@ -10,9 +10,7 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cstring>
-#include <latch>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -23,7 +21,6 @@
 #include "common/bit_util.h"
 #include "common/common_types.h"
 #include "common/div_ceil.h"
-#include "common/literals.h"
 #include "common/scratch_buffer.h"
 #include "common/settings.h"
 #include "video_core/compatible_formats.h"
@@ -42,7 +39,6 @@
 #include "video_core/textures/bcn.h"
 #include "video_core/textures/decoders.h"
 #include "video_core/textures/unswizzle_worker.h"
-#include "video_core/textures/workers.h"
 
 namespace VideoCommon {
 
@@ -573,7 +569,8 @@ void SwizzleBlockLinearImage(Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr
                 dst(gpu_memory, gpu_addr + guest_offset, subresource_size, &tmp_buffer);
 
             SwizzleTexture(dst, src, bytes_per_block, num_tiles.width, num_tiles.height,
-                           num_tiles.depth, block.height, block.depth, 1, gpu_memory.UsesNativeTiling());
+                           num_tiles.depth, block.height, block.depth, 1,
+                           UsesNativeGobs(gpu_memory.UsesNativeTiling(), info));
         }
 
         host_offset += host_bytes_per_layer;
@@ -856,70 +853,6 @@ bool IsValidEntry(const Tegra::MemoryManager& gpu_memory, const TICEntry& config
     return gpu_memory.GpuToCpuAddress(address, guest_size_bytes).has_value();
 }
 
-void PrefaultGuestMemory(Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, size_t size) {
-    using namespace Common::Literals;
-    // Guest memory is one section mapped twice, and Windows faults once per 4 KiB the first time
-    // these reads go through the backing to a page the guest wrote through its own view, or one
-    // trimmed or hinted cold since: 1.3-1.8 us a page, so Star Fox's cutscene bursts untiled at
-    // 1.7 GB/s. Faults on several threads resolve in parallel (1.6-1.75x on 3 threads). Linux maps
-    // 16 pages per such fault, where touching them first gained nothing.
-#ifdef _WIN32
-    constexpr bool PrefaultPays = true;
-#else
-    constexpr bool PrefaultPays = false;
-#endif
-    constexpr size_t PageSize = 4_KiB;
-    constexpr size_t MinBytes = 1_MiB;
-    if (!PrefaultPays || size < MinBytes) {
-        return;
-    }
-    std::vector<const u8*> pages;
-    if (const u8* const span = gpu_memory.GetSpan(gpu_addr, size)) {
-        const auto begin = Common::AlignDown(reinterpret_cast<uintptr_t>(span), PageSize);
-        const auto end = reinterpret_cast<uintptr_t>(span) + size;
-        pages.reserve(Common::DivCeil(end - begin, PageSize));
-        for (uintptr_t page = begin; page < end; page += PageSize) {
-            pages.push_back(reinterpret_cast<const u8*>(page));
-        }
-    } else {
-        pages.reserve(Common::DivCeil(size, PageSize) + 1);
-        for (GPUVAddr page = gpu_addr; page < gpu_addr + size;
-             page = Common::AlignDown(page, PageSize) + PageSize) {
-            if (const u8* const pointer = gpu_memory.GetPointer(page)) {
-                pages.push_back(pointer);
-            }
-        }
-    }
-    constexpr size_t Batch = 64;
-    constexpr size_t MaxHelpers = 7;
-    std::atomic<size_t> cursor{0};
-    const auto touch = [&] {
-        for (;;) {
-            const size_t first = cursor.fetch_add(Batch, std::memory_order_relaxed);
-            if (first >= pages.size()) {
-                return;
-            }
-            const size_t last = (std::min)(first + Batch, pages.size());
-            for (size_t i = first; i < last; ++i) {
-                static_cast<void>(*static_cast<const volatile u8*>(pages[i]));
-            }
-        }
-    };
-    std::latch helpers{static_cast<std::ptrdiff_t>(MaxHelpers)};
-    size_t queued = 0;
-    auto& workers = Tegra::Texture::GetThreadWorkers();
-    while (queued < MaxHelpers && (queued + 1) * Batch * 2 <= pages.size() &&
-           workers.TryQueueWork([&] {
-               touch();
-               helpers.count_down();
-           })) {
-        ++queued;
-    }
-    helpers.count_down(static_cast<std::ptrdiff_t>(MaxHelpers - queued));
-    touch();
-    helpers.wait();
-}
-
 boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(
     Tegra::MemoryManager& gpu_memory, GPUVAddr gpu_addr, const ImageInfo& info,
     std::span<const u8> input, std::span<u8> output, Tegra::Texture::UnswizzleWorker* worker) {
@@ -992,10 +925,11 @@ boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(
                 !worker->TryUnswizzle(
                     dst.first(host_bytes_per_layer), src.first(level_sizes[level]), 1U << bpp_log2,
                     num_tiles.width, num_tiles.height, num_tiles.depth, block.height, block.depth,
-                    stride_alignment, gpu_memory.UsesNativeTiling(), Nx2Perf::Verify())) {
+                    stride_alignment, UsesNativeGobs(gpu_memory.UsesNativeTiling(), info),
+                    Nx2Perf::Verify())) {
                 UnswizzleTexture(dst, src, 1U << bpp_log2, num_tiles.width, num_tiles.height,
                                  num_tiles.depth, block.height, block.depth, stride_alignment,
-                                 gpu_memory.UsesNativeTiling());
+                                 UsesNativeGobs(gpu_memory.UsesNativeTiling(), info));
             }
             guest_layer_offset += layer_stride;
             host_offset += host_bytes_per_layer;
@@ -1185,7 +1119,7 @@ std::vector<BufferImageCopy> UnswizzleImageRects(Tegra::MemoryManager& gpu_memor
             gpu_memory.ReadBlockUnsafe(row_addr, swizzled.data(), row_bytes);
             UnswizzleTexture(output.subspan(output_offset, bytes), swizzled, 1U << bpp_log2, width,
                              texel_rows, 1, level.block_height, 0, 0,
-                             gpu_memory.UsesNativeTiling());
+                             UsesNativeGobs(gpu_memory.UsesNativeTiling(), info));
             const u32 row_y = row * level.block_rows;
             const u32 y0 = (std::max)(rect.y, row_y);
             const u32 y1 = (std::min)(rect.y + rect.height, row_y + texel_rows);
@@ -1220,6 +1154,7 @@ UnswizzlePlan PlanUnswizzleImageRows(
     }
     const u32 bpp_log2 = BytesPerBlockLog2(info.format);
     plan.bpp_log2 = bpp_log2;
+    plan.maxwell_gobs = info.maxwell_gobs;
     const Extent2D tile_size = DefaultBlockSize(info.format);
     const LevelInfo level_info = MakeLevelInfo(info);
     const s32 num_levels = info.resources.levels;
@@ -1341,7 +1276,7 @@ void ExecuteUnswizzlePlan(Tegra::MemoryManager& gpu_memory, const UnswizzlePlan&
         Tegra::Texture::UnswizzleTexture(output.subspan(r.host_offset, r.host_bytes),
                                          run, 1U << plan.bpp_log2, r.run_tiles, r.tile_rows, 1,
                                          r.block.height, r.block.depth, r.run_alignment,
-                                         gpu_memory.UsesNativeTiling());
+                                         gpu_memory.UsesNativeTiling() && !plan.maxwell_gobs);
     }
 }
 

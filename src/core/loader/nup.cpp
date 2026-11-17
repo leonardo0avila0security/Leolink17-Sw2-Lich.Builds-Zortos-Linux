@@ -224,6 +224,13 @@ AppLoader::LoadResult AppLoader_NUP::Load(Kernel::KProcess& process, Core::Syste
         return result;
     }
 
+    // Publish the sibling programs before the guest can open them.
+    std::vector<FileSys::BootContent> boot_content;
+    for (auto& [id, romfs] : nup->GetSiblingProgramRomFS()) {
+        boot_content.push_back({id, FileSys::ContentRecordType::Program, std::move(romfs)});
+    }
+    FileSys::SetBootContent(std::move(boot_content));
+
     system.GetFileSystemController().RegisterProcess(
         process.GetProcessId(), base_title_id,
         std::make_shared<FileSys::RomFSFactory>(*this, system.GetContentProvider(),
