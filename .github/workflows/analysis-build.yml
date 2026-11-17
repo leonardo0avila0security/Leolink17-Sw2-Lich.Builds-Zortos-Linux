@@ -16,7 +16,7 @@ on:
       - ".github/workflows/analysis-build.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: analysis-build-${{ github.ref }}
@@ -128,3 +128,15 @@ jobs:
           path: pkg/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish to the analysis-latest release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          (cd pkg && 7z a -tzip ../lichii-analysis-windows.zip . > /dev/null)
+          gh release view analysis-latest > /dev/null 2>&1 || gh release create analysis-latest \
+            --prerelease --target "$GITHUB_SHA" --title "Analysis build (latest)" \
+            --notes "Windows CLI build for recompilation analysis. Unzip and run recomp\\run-analysis.ps1."
+          gh release upload analysis-latest lichii-analysis-windows.zip --clobber
