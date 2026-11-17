@@ -17,7 +17,8 @@
 #
 # Spec (JSON list), one object per probe:
 #   name       label in the output
-#   at         "sym:<exact mangled name>" or "<module>+0x<offset>"
+#   at         "sym:<exact mangled name>", "syms:<substring>" (one probe per symbol whose mangled name contains it,
+#              named after the symbol) or "<module>+0x<offset>"
 #   dump       {"x0": 64, ...}: bytes to read at the address in that register, on entry
 #   ret        "lr" (break at the return address), "next" (at pc+4: the probe is on a BL), or absent
 #   ret_dump   [["x0", 40], ...]: bytes to read at the entry value of that register, on return;
@@ -138,6 +139,15 @@ class Modules:
             if n == name:
                 return b
         raise KeyError(name)
+
+    def matching(self, part):
+        """[(name, address)] of the exported functions whose mangled name contains part."""
+        out = []
+        for n, (b, _s) in self.mods:
+            for off, size, sname in self.syms.get(n, []):
+                if part in sname and size:
+                    out.append((sname, b + off))
+        return out
 
     def resolve(self, at):
         if at.startswith("sym:"):
@@ -276,10 +286,21 @@ def main():
     for n, (b, s) in mods.mods:
         print(f"  {n} @ {b:#x} size {s:#x} ({len(mods.syms.get(n, []))} symbols)")
 
+    expanded = []
+    for p in spec:
+        if p["at"].startswith("syms:"):
+            found = mods.matching(p["at"][5:])
+            print(f"{p['name']}: {len(found)} symbols contain {p['at'][5:]}")
+            for sname, addr in found:
+                q = dict(p, name=sname, at=f"addr:{addr:#x}")
+                expanded.append(q)
+        else:
+            expanded.append(p)
+    spec = expanded
     probes = {}  # address -> probe
     for p in spec:
         try:
-            addr = mods.resolve(p["at"])
+            addr = int(p["at"][5:], 16) if p["at"].startswith("addr:") else mods.resolve(p["at"])
         except KeyError as e:
             print(f"skip {p['name']}: {e}")
             continue

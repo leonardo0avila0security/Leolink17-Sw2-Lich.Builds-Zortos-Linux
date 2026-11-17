@@ -1,0 +1,5 @@
+[
+  {"name": "streamplay", "at": "syms:_ZN2nn10streamplay", "ret": "lr", "max": 12, "bt": 3,
+   "dump": {"x0": 64, "x1": 64, "x2": 64},
+   "ret_dump": [["x0", 64], ["x1", 64], ["x2", 64], ["x3", 64]]}
+]
