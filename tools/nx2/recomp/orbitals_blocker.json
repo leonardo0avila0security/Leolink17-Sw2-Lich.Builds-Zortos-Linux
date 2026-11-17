@@ -1,0 +1,14 @@
+[
+  {"name": "vi_GetLatestFrameNumber", "at": "sym:_ZN2nn2vi20GetLatestFrameNumberEPmPKNS0_5LayerE",
+   "ret": "lr", "ret_dump": [["x0", 8]], "max": 200, "bt": 4},
+  {"name": "vi_ListFrameHistory", "at": "sym:_ZN2nn2vi16ListFrameHistoryEPNS0_9FrameInfoEiPKNS0_5LayerE",
+   "ret": "lr", "ret_dump": [["x0", "x1*40"]], "max": 400, "bt": 4},
+  {"name": "call_GetLatestFrameNumber", "at": "main+0x153f990", "callsite": true,
+   "ret": "next", "ret_dump": [["x0", 8]], "max": 120, "bt": 6},
+  {"name": "call_ListFrameHistory", "at": "main+0x1540460", "callsite": true,
+   "ret": "next", "ret_dump": [["x0", "x1*40"]], "max": 200, "bt": 6},
+  {"name": "flip_tracker_wait", "at": "main+0x1540430", "callsite": true, "dump": {"x0": 64},
+   "ret": "next", "max": 150, "bt": 8},
+  {"name": "render_thread_wait", "at": "main+0x4a6d0", "callsite": true, "dump": {"x0": 64},
+   "ret": "next", "watch": ["x0", 8], "watch_max": 40, "max": 150, "bt": 12}
+]

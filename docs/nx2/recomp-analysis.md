@@ -66,3 +66,28 @@ tools/nx2/recomp/run-analysis.sh build-analysis/bin/eden-cli "<title>/exefs/main
   digest, report, SVC/IPC list, top functions) is the one to send first.
   `lichii-logs-full.zip` holds the raw log and block trace. They contain no game files or keys;
   the full log can show file paths, so check it before sharing.
+
+## Probing: the values orbitals-recomp has to reproduce
+
+orbitals-recomp (pmocer-latibro) replaces SDK functions by name. Where its answer differs from the
+console's, the game stalls (roadmap step 1: the RenderThread waits for ever after frame 21). Lichii
+runs the game's own SDK, so its answers are the reference.
+
+`run-probe.ps1` starts `eden-cli -d 6543` (the GDB stub; the game runs normally until a client
+attaches) and `lichii-probe.exe`, which puts software breakpoints on the functions of a spec, logs
+arguments, memory, return values, wait times, backtraces (as `main+0x...` with the nearest exported
+symbol) and, optionally, which code writes an object (write watchpoint). Every probe has a hit limit:
+each stop costs the game a few milliseconds.
+
+`orbitals_blocker.json`, the default spec, targets the stall:
+
+| Probe | Where | What it answers |
+|---|---|---|
+| `vi_GetLatestFrameNumber`, `vi_ListFrameHistory` | SDK entry points (by symbol, needs the exefs) | the real frame numbers and `FrameInfo` entries (40 bytes each) the SDK returns, which orbitals-recomp guesses today (`ov_gfx.c`) |
+| `call_GetLatestFrameNumber`, `call_ListFrameHistory` | `main+0x153f990`, `main+0x1540460` (the BLs) | the same at the game's call sites, without symbols |
+| `flip_tracker_wait` | `main+0x1540430`, BL to `WaitSystemEvent`, returns at `+0x1540434` | the event the flip tracker waits on and how long each wait lasts |
+| `render_thread_wait` | `main+0x4a6d0`, BLR, returns at `+0x4a6d4` | the function the RenderThread calls, its object, and the code that writes that object (the signaller) |
+
+Addresses come from the Lichii block traces: the roadmap's `main+0x4a6d4` and `main+0x1540434` are
+the return addresses of these two calls. Output: `out-probe/probes_summary.txt` (short, attach it as
+is) and `out-probe/probes.jsonl` (every event).

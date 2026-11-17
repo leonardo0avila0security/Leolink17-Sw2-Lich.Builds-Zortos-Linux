@@ -52,6 +52,10 @@ if ($HavePython) {
     return
 }
 
+$AnalyzeExe = Join-Path $Here "lichii-analyze.exe"
+if (Test-Path $AnalyzeExe) {
+    & $AnalyzeExe --blocks $env:LICHII_BLOCK_TRACE --log "$Out\eden_log.txt" --exefs (Split-Path -Parent $Game) --out "$Out\analysis"
+}
 # No Python: build the digest in PowerShell and zip the raw files. The analysis is done later
 # from lichii-logs-full.zip.
 Write-Host "`nPython not found: writing the log digest and zip without the analysis step."

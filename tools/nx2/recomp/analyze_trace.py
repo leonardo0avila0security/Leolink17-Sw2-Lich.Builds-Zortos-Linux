@@ -86,22 +86,16 @@ def parse_blocks(path, shift=0, blocks=None, first=None):
 
 
 def load_exefs(exefs):
-    from nso_syms import load_image, parse  # noqa: E402
+    from nso_lite import load_image, symbols
     info = {}
     for nso in sorted(Path(exefs).iterdir()):
-        if nso.name in ("main.npdm",) or nso.suffix:
+        if nso.suffix or not nso.is_file():
             continue
         try:
-            img = load_image(str(nso))
+            img = load_image(nso)
         except Exception:
             continue
-        syms = {}
-        try:
-            for value, _size, name in parse(img)[0]:
-                syms[value] = name
-        except Exception:
-            pass
-        info[nso.name] = (len(img), syms)
+        info[nso.name] = (len(img), {off: name for off, _size, name in symbols(img)})
     return info
 
 
