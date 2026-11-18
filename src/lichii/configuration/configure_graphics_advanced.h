@@ -29,6 +29,7 @@ public:
     ~ConfigureGraphicsAdvanced() override;
 
     void ApplyConfiguration() override;
+    void ApplyConfiguration(bool explicit_apply);
     void SetConfiguration() override;
 
     void ExposeComputeOption();
@@ -43,6 +44,7 @@ private:
     const Core::System& system;
 
     std::vector<std::function<void(bool)>> apply_funcs;
+    std::vector<std::function<void(bool)>> explicit_apply_funcs;
 
     QWidget* checkbox_enable_compute_pipelines{};
 };

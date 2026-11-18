@@ -40,13 +40,14 @@ void ConfigureGraphicsAdvanced::Setup(const ConfigurationShared::Builder& builde
 
     for (auto setting :
          Settings::values.linkage.by_category[Settings::Category::RendererAdvanced]) {
+        const bool is_direct_nvn = setting->Id() == Settings::values.nvn_direct_renderer.Id();
 #ifndef LICHII_NVN_DIRECT
-        // Only Linux x86-64 builds have the NVN direct renderer.
-        if (setting->Id() == Settings::values.nvn_direct_renderer.Id()) {
+        if (is_direct_nvn) {
             continue;
         }
 #endif
-        ConfigurationShared::Widget* widget = builder.BuildWidget(setting, apply_funcs);
+        auto& callbacks = is_direct_nvn ? explicit_apply_funcs : apply_funcs;
+        ConfigurationShared::Widget* widget = builder.BuildWidget(setting, callbacks);
 
         if (widget == nullptr) {
             continue;
@@ -72,9 +73,18 @@ void ConfigureGraphicsAdvanced::Setup(const ConfigurationShared::Builder& builde
 }
 
 void ConfigureGraphicsAdvanced::ApplyConfiguration() {
+    ApplyConfiguration(true);
+}
+
+void ConfigureGraphicsAdvanced::ApplyConfiguration(bool explicit_apply) {
     const bool is_powered_on = system.IsPoweredOn();
     for (const auto& func : apply_funcs) {
         func(is_powered_on);
+    }
+    if (explicit_apply) {
+        for (const auto& func : explicit_apply_funcs) {
+            func(is_powered_on);
+        }
     }
 }
 

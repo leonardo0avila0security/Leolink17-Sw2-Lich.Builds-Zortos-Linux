@@ -718,10 +718,10 @@ struct Values {
                                                      Category::RendererAdvanced};
 
     // Runs the game's NVN calls in the NVN direct renderer (video_core/nvn_direct) instead of
-    // emulating its GPU. Read when a game boots (Core::NvnHook::Install), which falls back to
-    // the GPU emulation for a game the direct renderer cannot run.
+    // emulating its GPU. The setting can be saved during play, but the renderer is chosen at boot.
     SwitchableSetting<bool> nvn_direct_renderer{linkage, false, "nvn_direct_renderer",
-                                                Category::RendererAdvanced};
+                                                Category::RendererAdvanced,
+                                                Specialization::Default, true, true};
 
     SwitchableSetting<bool> enable_compute_pipelines{linkage, false, "enable_compute_pipelines",
                                                      Category::RendererAdvanced};

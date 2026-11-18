@@ -8,6 +8,7 @@
 #include <sstream>
 #include <type_traits>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <fmt/format.h>
 #include "common/fs/path_util.h"
 #include "common/recommended_settings.h"
@@ -106,6 +107,7 @@ void CheckLegacyProfile() {
     CHECK_FALSE(values.async_presentation.GetValue());
     // Not waiting for shaders became every config's default, not only a seeded one.
     CHECK(values.use_asynchronous_shaders.GetValue());
+    CHECK_FALSE(values.nvn_direct_renderer.GetValue());
 }
 
 void CheckUnchangedProfile() {
@@ -326,6 +328,29 @@ TEST_CASE("A per-game NVN direct renderer value overrides the global one both wa
         CHECK(Settings::values.nvn_direct_renderer.GetValue() == global_value);
         Settings::RestoreGlobalState(false);
     }
+}
+
+TEST_CASE("Direct NVN persists a saved global or per-game choice", "[config][nvn_direct_config]") {
+    ConfigDirectory directory;
+    const auto type = GENERATE(Config::ConfigType::GlobalConfig, Config::ConfigType::PerGameConfig);
+    const bool is_global = type == Config::ConfigType::GlobalConfig;
+    const std::string name = is_global ? "qt-config" : "game";
+    auto& setting = Settings::values.nvn_direct_renderer;
+
+    FileConfig config{name, type};
+    CHECK_FALSE(setting.GetValue());
+    setting.SetGlobal(is_global);
+    for (const bool enabled : {true, false}) {
+        setting.SetValue(enabled);
+        config.SaveValues();
+        setting.SetValue(!enabled);
+        Settings::RestoreGlobalState(false);
+
+        FileConfig reopened{name, type};
+        CHECK(setting.UsingGlobal() == is_global);
+        CHECK(setting.GetValue() == enabled);
+    }
+    Settings::RestoreGlobalState(false);
 }
 
 TEST_CASE("Missing per-game and input profiles are not seeded", "[config]") {

@@ -163,7 +163,7 @@ ConfigureDialog::~ConfigureDialog() = default;
 
 void ConfigureDialog::SetConfiguration() {}
 
-void ConfigureDialog::ApplyConfiguration() {
+void ConfigureDialog::ApplyConfiguration(bool explicit_apply) {
     general_tab->ApplyConfiguration();
     ui_tab->ApplyConfiguration();
     system_tab->ApplyConfiguration();
@@ -173,7 +173,7 @@ void ConfigureDialog::ApplyConfiguration() {
     hotkeys_tab->ApplyConfiguration(registry);
     cpu_tab->ApplyConfiguration();
     graphics_tab->ApplyConfiguration();
-    graphics_advanced_tab->ApplyConfiguration();
+    graphics_advanced_tab->ApplyConfiguration(explicit_apply);
     graphics_extensions_tab->ApplyConfiguration();
     audio_tab->ApplyConfiguration();
     debug_tab_tab->ApplyConfiguration();
@@ -319,7 +319,7 @@ void ConfigureDialog::OnLanguageChanged(const QString& locale) {
     //  Reloading the game list is needed to force retranslation.
     UISettings::values.is_game_list_reload_pending = true;
     // first apply the configuration, and then restore the display
-    ApplyConfiguration();
+    ApplyConfiguration(false);
     RetranslateUI();
     SetConfiguration();
 }

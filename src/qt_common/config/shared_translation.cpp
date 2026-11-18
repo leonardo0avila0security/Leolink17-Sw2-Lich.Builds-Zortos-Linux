@@ -411,12 +411,15 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "shaders of recent sessions are built there and the rest in the background or when "
               "the game first needs them.\nLoading takes longer and uses more memory, about 0.3 "
               "MB per shader, up to a quarter of the RAM. Takes effect when a game starts."));
-    INSERT(Settings, nvn_direct_renderer, tr("NVN direct renderer (experimental)"),
-           tr("Runs the game's graphics calls (NVN) directly on Vulkan instead of emulating the "
-              "Switch GPU. Can be much faster, but is experimental: some games may render wrong "
-              "or crash.\nGames it cannot run use the normal renderer; the status bar says why. "
-              "When a later launch needs a fresh process for the direct renderer, Lichii restarts "
-              "automatically. Vulkan only. Takes effect when a game starts."));
+    INSERT(Settings, nvn_direct_renderer, tr("Direct NVN (Experimental)"),
+           tr("Takes effect on the next game launch. Runs the game's graphics calls directly on "
+              "Vulkan instead of emulating the Switch GPU. Some games may render incorrectly or "
+              "crash.\nIf Direct NVN can't start, Lichii uses the normal renderer and shows why "
+              "in the status bar. Lichii restarts automatically if Direct NVN needs a fresh "
+              "process.\nFor debugging, EDEN_NX2_NVN_DIRECT=1 requests Direct NVN and "
+              "EDEN_NX2_NVN_DIRECT=0 forces the normal renderer. These values override this "
+              "setting without changing it. The last Renderer line for the launch in the log "
+              "shows which renderer was used."));
     INSERT(Settings, native_async_draws, tr("Switch 2 draws and compute with unbuilt shaders:"),
            tr("Only applies when \"Don't wait for shaders that are still compiling\" is on. Decides "
               "what Switch 2 work does when its pipeline is still building. Only work that redraws "
