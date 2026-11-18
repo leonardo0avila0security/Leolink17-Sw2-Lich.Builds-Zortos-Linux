@@ -7,6 +7,7 @@
 #include <future>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <utility>
 
 #include <catch2/catch_test_macros.hpp>
@@ -123,6 +124,11 @@ public:
     int OpenCount() {
         std::scoped_lock lock{mutex};
         return opens;
+    }
+
+    int PcmWriteCount() {
+        std::scoped_lock lock{mutex};
+        return pcm_writes;
     }
 
     u8 LastFormat() {
@@ -285,9 +291,16 @@ TEST_CASE("Steam haptics disconnect during setup closes without streaming", "[in
     haptics.SetVibration(Vibration(Common::Input::VibrationSide::Both), true);
     const bool configuring = fake->WaitForConfigure();
     auto disconnected = std::async(std::launch::async, [&] { haptics.Disconnect(); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    while (haptics.IsStreaming() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    const bool stopped_during_setup = !haptics.IsStreaming();
     fake->BlockConfigure(false);
     disconnected.get();
     REQUIRE(configuring);
+    REQUIRE(stopped_during_setup);
+    REQUIRE(fake->PcmWriteCount() == 0);
     REQUIRE(fake->CloseCount() == 1);
     REQUIRE_FALSE(haptics.IsStreaming());
     REQUIRE_FALSE(haptics.SetVibration(Vibration(Common::Input::VibrationSide::Both), true));

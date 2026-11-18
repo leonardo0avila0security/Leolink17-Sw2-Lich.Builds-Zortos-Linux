@@ -95,7 +95,10 @@ void ConfigureVibration::ApplyConfiguration() {
         ui->checkBoxTriggerRumble->isChecked() ? static_cast<u8>(ui->spinTriggerRumble->value())
                                                : u8{0});
     for (std::size_t i = 0; i < NUM_PLAYERS; ++i) {
-        hid_core.GetEmulatedControllerByIndex(i)->RefreshVibration();
+        auto* controller = hid_core.GetEmulatedControllerByIndex(i);
+        if (controller->IsConnected()) {
+            controller->RefreshVibration();
+        }
     }
 }
 

@@ -1284,7 +1284,11 @@ bool EmulatedController::SetVibrationLocked(DeviceIndex device_index, const Vibr
         return false;
     }
 
-    requested_vibration[index] = vibration;
+    if (side == Common::Input::VibrationSide::Both) {
+        requested_vibration.fill(vibration);
+    } else {
+        requested_vibration[index] = vibration;
+    }
     if (!Settings::values.vibration_enabled) {
         vibration_delivered[index] = false;
         return false;
