@@ -25,6 +25,7 @@
 #include "common/string_util.h"
 #include "core/arm/exclusive_monitor.h"
 #include "core/core.h"
+#include "core/nvn_hook.h"
 
 #include "launch_timestamp_cache.h"
 #include "core/core_timing.h"
@@ -63,6 +64,7 @@
 #include "core/hle/service/glue/glue_manager.h"
 #include "core/hle/service/glue/time/static.h"
 #include "core/hle/service/glue/time/time_zone_binary.h"
+#include "core/hle/service/nx2_image_layout.h"
 #include "core/hle/service/psc/time/static.h"
 #include "core/hle/service/psc/time/steady_clock.h"
 #include "core/hle/service/psc/time/system_clock.h"
@@ -554,7 +556,11 @@ struct System::Impl {
                  Common::g_cpu_caps.max_frequency, Common::g_cpu_caps.invariant_tsc);
 #endif
 
+        Core::NvnHook::TraceStartup("before guest kernel");
         const auto kernel_result = InitializeKernel(system);
+        Core::NvnHook::TraceStartup(kernel_result == SystemResultStatus::Success
+                                       ? "guest kernel ready"
+                                       : "guest kernel failed");
         if (kernel_result != SystemResultStatus::Success) {
             return kernel_result;
         }
@@ -606,6 +612,7 @@ struct System::Impl {
 
         // Make the process created be the application
         kernel.SetApplicationProcess(process->GetHandle());
+        Core::NvnHook::Install(system, *process->GetHandle());
 
         // Set up the rest of the system.
         SystemResultStatus init_result{SetupForApplicationProcess(system, emu_window)};
@@ -686,6 +693,7 @@ struct System::Impl {
         is_powered_on = false;
         exit_locked = false;
         exit_requested = false;
+        Core::NvnHook::StopDirect();
         if (gpu_core)
             gpu_core->NotifyShutdown();
 
@@ -727,6 +735,9 @@ struct System::Impl {
             general_channel_context.reset();
         }
         kernel.Shutdown();
+        // After the services stop: a display HDR query still in flight stores its answer.
+        Service::g_nx2_told_hdr = false;
+        Core::NvnHook::Uninstall();
         stop_event = {};
         Network::RestartSocketOperations();
 
@@ -744,6 +755,7 @@ struct System::Impl {
         if (Settings::CurrentProgramIsSwitch2()) {
             device_memory.reset();
             guest_memory_released = true;
+            Core::NvnHook::TraceStartup("guest backing released");
         }
 
         LOG_DEBUG(Core, "Shutdown OK");

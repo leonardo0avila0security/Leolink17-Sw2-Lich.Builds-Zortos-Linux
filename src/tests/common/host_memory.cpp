@@ -269,6 +269,38 @@ TEST_CASE("HostMemory: Partial sparse middle unmap and check bindings", "[common
 }
 
 #ifdef _WIN32
+TEST_CASE("HostMemory: Partial unmaps keep the rest of the view readable", "[common]") {
+    if (!MapsSingleGuestPages()) {
+        SKIP("Host pages larger than 4 KiB only map whole host pages");
+    }
+    HostMemory mem(BACKING_SIZE, VIRTUAL_SIZE);
+    constexpr size_t Base = 0x400000;
+    constexpr size_t Size = 0x400000;
+    constexpr size_t Unmaps = 512;
+    mem.Map(Base, 0, Size, PERMS, HEAP);
+    volatile u8* const last = mem.VirtualBasePointer() + Base + Size - 0x1000;
+    *last = 0x5a;
+    std::atomic<bool> started{};
+    std::atomic<bool> done{};
+    u64 wrong = 0;
+    std::thread reader([&] {
+        started = true;
+        while (!done.load(std::memory_order_relaxed)) {
+            wrong += *last != 0x5a;
+        }
+    });
+    while (!started) {
+        std::this_thread::yield();
+    }
+    // Each unmap of the first page left takes the view down and maps back the rest of it.
+    for (size_t page = 0; page < Unmaps; ++page) {
+        mem.Unmap(Base + page * 0x1000, 0x1000, HEAP);
+    }
+    done = true;
+    reader.join();
+    REQUIRE(wrong == 0);
+}
+
 TEST_CASE("HostMemory: Trim zero pages keeps contents", "[common]") {
     constexpr size_t Page = 0x1000;
     HostMemory mem(BACKING_SIZE, VIRTUAL_SIZE);
@@ -420,3 +452,64 @@ TEST_CASE("HostMemory: Protect within a view, across views and over a gap", "[co
     REQUIRE(mem.BackingBasePointer()[0x200000] == 7);
 }
 #endif
+
+TEST_CASE("HostMemory: Backing view maps runs and zero pages of its own", "[common]") {
+    if (!MapsSingleGuestPages()) {
+        SKIP("Host pages larger than 4 KiB only map whole host pages");
+    }
+    HostMemory mem(BACKING_SIZE, VIRTUAL_SIZE);
+    if (mem.VirtualBasePointer() == nullptr) {
+        SKIP("no fastmem");
+    }
+    constexpr size_t Page = 0x1000;
+    u8* const backing = mem.BackingBasePointer();
+    // A hole, two runs out of order in the backing, a hole, the first run's page again, a hole.
+    const HostMemory::BackingRun runs[] = {
+        {.view_offset = 1 * Page, .host_offset = 0x50000, .length = 2 * Page},
+        {.view_offset = 3 * Page, .host_offset = 0x10000, .length = Page},
+        {.view_offset = 5 * Page, .host_offset = 0x50000, .length = Page},
+    };
+    u8* const view = mem.MapBackingView(7 * Page, runs);
+    REQUIRE(view != nullptr);
+
+    backing[0x50000] = 1;
+    backing[0x51000] = 2;
+    backing[0x10000] = 3;
+    REQUIRE(view[1 * Page] == 1);
+    REQUIRE(view[2 * Page] == 2);
+    REQUIRE(view[3 * Page] == 3);
+    REQUIRE(view[5 * Page] == 1);
+
+    view[5 * Page + 8] = 4;
+    REQUIRE(backing[0x50008] == 4);
+    REQUIRE(view[1 * Page + 8] == 4);
+
+    // The holes are zero, writable and shared with nothing.
+    for (size_t hole : {size_t{0}, 4 * Page, 6 * Page}) {
+        REQUIRE(view[hole] == 0);
+        view[hole] = 5;
+    }
+    REQUIRE(view[0] == 5);
+    REQUIRE(view[4 * Page] == 5);
+    REQUIRE(view[6 * Page] == 5);
+    REQUIRE(backing[0] == 0);
+
+    // The view stays when the fastmem view of the same pages goes.
+    mem.Map(0x100000, 0x50000, Page, PERMS, HEAP);
+    mem.Unmap(0x100000, Page, HEAP);
+    REQUIRE(view[1 * Page] == 1);
+
+    mem.UnmapBackingView(view, 7 * Page);
+    REQUIRE(backing[0x50000] == 1);
+
+    // Runs only, and holes only.
+    const HostMemory::BackingRun whole[] = {{.view_offset = 0, .host_offset = 0x10000, .length = Page}};
+    u8* const run_view = mem.MapBackingView(Page, whole);
+    REQUIRE(run_view != nullptr);
+    REQUIRE(run_view[0] == 3);
+    mem.UnmapBackingView(run_view, Page);
+    u8* const zero_view = mem.MapBackingView(2 * Page, {});
+    REQUIRE(zero_view != nullptr);
+    REQUIRE(zero_view[Page] == 0);
+    mem.UnmapBackingView(zero_view, 2 * Page);
+}
