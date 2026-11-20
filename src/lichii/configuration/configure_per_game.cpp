@@ -494,7 +494,10 @@ ConfigurePerGame::ConfigurePerGame(QWidget* parent, u64 title_id_, const std::st
                         {audio_tab.get(), QStringLiteral("aud")},
                         {applets_tab.get(), QStringLiteral("app")},
                     };
-                    const auto it = sections.find(ui->tabWidget->currentWidget());
+                    // The tab widget holds the scroll area; the map is keyed by its tab.
+                    const auto* const area =
+                        qobject_cast<QScrollArea*>(ui->tabWidget->currentWidget());
+                    const auto it = sections.find(area != nullptr ? area->widget() : nullptr);
                     return it == sections.end() ? QString{} : it->second;
                 },
             .builder = builder.get(),

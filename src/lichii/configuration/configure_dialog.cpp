@@ -170,7 +170,10 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
                         {graphics_extensions_tab.get(), QStringLiteral("gfxx")},
                         {audio_tab.get(), QStringLiteral("aud")},
                     };
-                    const auto it = sections.find(ui->tabWidget->currentWidget());
+                    // The tab widget holds the scroll area; the map is keyed by its tab.
+                    const auto* const area =
+                        qobject_cast<QScrollArea*>(ui->tabWidget->currentWidget());
+                    const auto it = sections.find(area != nullptr ? area->widget() : nullptr);
                     return it == sections.end() ? QString{} : it->second;
                 },
             .builder = builder.get(),

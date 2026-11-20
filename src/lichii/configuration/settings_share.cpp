@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <algorithm>
 #include <cstdlib>
 #include <map>
 #include <set>
@@ -167,6 +168,7 @@ Plan MakePlan(const Decoded& code, const Section& section,
               const ConfigurationShared::Builder& builder, bool per_game) {
     Plan plan;
     std::vector<Change> per_game_wanted;
+    std::vector<Change> unchanged; ///< Settings already at the wanted value (candidates to keep).
     std::map<const ConfigurationShared::Widget*, bool> widget_global;
     std::map<std::string, std::string> listed;
     for (const auto& entry : code.entries) {
@@ -212,8 +214,11 @@ Plan MakePlan(const Decoded& code, const Section& section,
                 widget_global.try_emplace(widget, true).first->second && to_global;
             continue;
         }
+        Change change{setting, widget, current, value, false};
         if (current != Normalize(*setting, value)) {
-            plan.changes.push_back({setting, widget, current, value, false});
+            plan.changes.push_back(std::move(change));
+        } else {
+            unchanged.push_back(std::move(change));
         }
     }
 
@@ -225,6 +230,9 @@ Plan MakePlan(const Decoded& code, const Section& section,
         const auto target = Normalize(*change.setting, change.new_value);
         if (to_global ? change.widget->ShowsGlobal()
                       : !change.widget->ShowsGlobal() && change.old_value == target) {
+            if (!to_global) {
+                unchanged.push_back(std::move(change));
+            }
             continue;
         }
         change.to_global = to_global;
@@ -232,6 +240,24 @@ Plan MakePlan(const Decoded& code, const Section& section,
             change.new_value.clear();
         }
         plan.changes.push_back(std::move(change));
+    }
+
+    // Staging a paired checkbox to a custom value can reset the field it enables to the
+    // default/global value, so a field that already matches is kept and staged after it.
+    for (auto& change : unchanged) {
+        const auto* const checkbox = change.widget->CheckboxSetting();
+        if (checkbox == nullptr || checkbox == change.setting) {
+            continue;
+        }
+        const bool checkbox_staged = std::any_of(
+            plan.changes.begin(), plan.changes.end(), [&](const Change& staged) {
+                return staged.widget == change.widget && staged.setting == checkbox &&
+                       !staged.to_global;
+            });
+        if (checkbox_staged) {
+            change.to_global = false;
+            plan.changes.push_back(std::move(change));
+        }
     }
 
     for (const auto& [key, value] : listed) {
