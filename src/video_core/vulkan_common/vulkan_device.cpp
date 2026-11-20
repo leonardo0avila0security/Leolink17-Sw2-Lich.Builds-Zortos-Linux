@@ -38,6 +38,7 @@
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/gpu_logging/gpu_logging.h"
 #include "video_core/shader_cache_v2/cache.h"
+#include "video_core/vram_target.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
 #endif
@@ -2434,6 +2435,9 @@ u64 Device::GetDeviceMemoryBudget() const {
         // gives it (4 GiB, 6 GiB with aggressive VRAM use).
         result = (std::min)(result, device_access_memory);
     }
+    if (vram_target != 0) {
+        result = (std::min)(result, vram_target);
+    }
     return result;
 }
 
@@ -2514,6 +2518,16 @@ void Device::CollectPhysicalMemoryInfo() {
         device_access_memory += heap_size;
     }
     main_heap_size = limit(mem_properties.memoryHeaps[main_heap].size);
+    const Settings::VramUsageMode vram_mode = Settings::values.vram_usage_mode.GetValue();
+    const u64 device_budget = device_access_memory;
+    vram_target = VideoCommon::VramTarget(vram_mode, device_budget);
+    if (vram_target != 0) {
+        LOG_INFO(Render_Vulkan, "VRAM usage mode {}: target {} MiB (device budget {} MiB)",
+                 Settings::CanonicalizeEnum(vram_mode), vram_target >> 20, device_budget >> 20);
+    } else {
+        LOG_INFO(Render_Vulkan, "VRAM usage mode {}: no target (device budget {} MiB)",
+                 Settings::CanonicalizeEnum(vram_mode), device_budget >> 20);
+    }
     if (is_integrated) {
         const s64 available_memory = static_cast<s64>(device_access_memory - device_initial_usage);
         const u64 memory_size = Settings::values.vram_usage_mode.GetValue() == Settings::VramUsageMode::Aggressive ? 6_GiB : 4_GiB;
@@ -2527,6 +2541,9 @@ void Device::CollectPhysicalMemoryInfo() {
             const size_t scaler_memory = 1_GiB * Settings::values.resolution_info.ScaleUp(1);
             device_access_memory = std::min<u64>(device_access_memory, normal_memory + scaler_memory);
         }
+    }
+    if (vram_target != 0) {
+        device_access_memory = (std::min)(device_access_memory, vram_target);
     }
 }
 
