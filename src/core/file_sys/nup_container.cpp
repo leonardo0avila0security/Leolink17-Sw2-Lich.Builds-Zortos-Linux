@@ -26,6 +26,8 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/swap.h"
+#include "core/file_sys/common_funcs.h"
+#include "core/file_sys/control_metadata.h"
 #include "core/file_sys/vfs/vfs_offset.h"
 
 namespace FileSys {
@@ -142,6 +144,7 @@ static_assert(sizeof(TlvHeader) == TlvHeaderSize);
 
 enum MetaType : u16 {
     MetaNpdm = 0x0001,
+    MetaNacp = 0x0002,
     MetaIcon = 0x0003,
     MetaDisplayVersion = 0x0004,
     MetaTitleName = 0x0005,
@@ -166,6 +169,12 @@ constexpr std::size_t DecoderCharge = 256 * 1024;
 /// Partly decoded spilled members that keep their decoder, and with it a window of up to
 /// 128 MiB; another one restarts from its first frame when read past its prefix again.
 constexpr std::size_t MaxSpillDecoders = 2;
+
+bool HasSwitch2ResourceTable(const VirtualDir& dir) {
+    return std::ranges::any_of(dir->GetFiles(), [](const VirtualFile& file) {
+        return file->GetName().find(".Nin_Ounce") != std::string::npos;
+    }) || std::ranges::any_of(dir->GetSubdirectories(), HasSwitch2ResourceTable);
+}
 
 } // namespace
 
@@ -786,6 +795,11 @@ bool NupContainer::ParseMeta(PackageInfo& package) {
         case MetaNpdm:
             package.npdm.assign(payload, payload + header.size);
             break;
+        case MetaNacp:
+            if (header.size == sizeof(RawNACP)) {
+                package.nacp.assign(payload, payload + header.size);
+            }
+            break;
         case MetaIcon:
             package.icon.assign(payload, payload + header.size);
             break;
@@ -869,6 +883,31 @@ std::optional<std::size_t> NupContainer::FindBestUpdatePackage() const {
         }
     }
     return best;
+}
+
+std::optional<std::size_t> NupContainer::FindUpgradePack(u64 program_id) {
+    const u64 own_base = GetBaseTitleID(program_id);
+    const u64 switch1_base = GetSwitch1ApplicationID(own_base);
+    if (switch1_base == own_base) {
+        return std::nullopt;
+    }
+
+    const u64 aoc_base = GetAOCBaseTitleID(switch1_base);
+    std::optional<std::size_t> pack;
+    for (std::size_t i = 0; i < packages.size(); ++i) {
+        const auto& package = packages[i];
+        if (package.kind != PackageKind::Addon || package.title_id < aoc_base ||
+            package.title_id > aoc_base + AOC_TITLE_ID_MASK ||
+            (pack && package.version <= packages[*pack].version)) {
+            continue;
+        }
+        const auto romfs = GetRomFSDir(i);
+        if (romfs && (romfs->GetFileRelative("System/AoCUpgradeVersion.txt") ||
+                      HasSwitch2ResourceTable(romfs))) {
+            pack = i;
+        }
+    }
+    return pack;
 }
 
 VirtualFile NupContainer::OpenFile(std::size_t file_index) {

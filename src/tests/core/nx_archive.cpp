@@ -117,6 +117,16 @@ TEST_CASE("NX: catalog-only queries", "[core][nx]") {
     CHECK(Loader::IsBootableGameContainer(file, Loader::FileType::NX));
     CHECK(Loader::AppLoader_NX::ReadPlatform(file, 0) == 2);
     CHECK(Loader::AppLoader_NX::ReadPlatform(file, ApplicationId) == 2);
+    const auto switch2 = Loader::AppLoader_NX::ReadProgramPlatform(file, 0);
+    REQUIRE(switch2.has_value());
+    CHECK(switch2->program_id == ApplicationId);
+    CHECK(switch2->platform == 2);
+    const auto switch1 =
+        Loader::AppLoader_NX::ReadProgramPlatform(OpenFixture("native_external_base.nx"), 0);
+    REQUIRE(switch1.has_value());
+    CHECK(switch1->program_id == ApplicationId);
+    CHECK(switch1->platform == 1);
+    CHECK_FALSE(Loader::AppLoader_NX::ReadProgramPlatform(OpenFixture("damaged_both_slots.nx"), 0));
     // Header and Catalog only: Manifest damage is found when the loader mounts the archive.
     for (const auto name : {"damaged_both_slots.nx", "truncated_header_area.nx", "invalid_offsets.nx"}) {
         INFO(name);
@@ -211,6 +221,8 @@ TEST_CASE("NX: reads span blocks, codecs and the reader's read limit", "[core][n
 TEST_CASE("NX: upstream conformance fixtures", "[core][nx]") {
     ScopedSystemTestContext environment;
     Core::System system;
+    // As every frontend does: the native loader reads the content provider.
+    system.SetContentProvider(std::make_unique<FileSys::ContentProviderUnion>());
     for (const auto name : InvalidFixtures) {
         INFO(name);
         Loader::AppLoader_NX loader{system, OpenFixture(name)};
@@ -306,6 +318,27 @@ TEST_CASE("NX: an extracted add-on is listed as add-on content after Load", "[co
     CHECK(ReadText(romfs->GetFile("dlc.bin")) == "dlc");
 }
 
+TEST_CASE("NX: a native base loads in a System nobody gave a content provider", "[core][nx]") {
+    // System::GetContentProvider dereferenced a null provider until a frontend called
+    // SetContentProvider, and AppLoader_NX keeps it for a native base's NSP loader. A System
+    // starts with an empty one now.
+    ScopedSystemTestContext environment;
+    Core::System system;
+    CHECK_FALSE(system.GetContentProvider().HasEntry(ApplicationId,
+                                                     FileSys::ContentRecordType::Program));
+    FileSys::ManualContentProvider provider;
+    system.RegisterContentProvider(FileSys::ContentProviderUnionSlot::FrontendManual, &provider);
+    Loader::AppLoader_NX loader{system, OpenFixture("native_external_base.nx")};
+    u64 program_id{};
+    REQUIRE(loader.ReadProgramId(program_id) == Loader::ResultStatus::Success);
+    CHECK(program_id == ApplicationId);
+    loader.RegisterContent(provider);
+    CHECK(system.GetContentProviderUnion().HasEntry(ApplicationId,
+                                                    FileSys::ContentRecordType::Program));
+    FileSys::VirtualFile romfs;
+    CHECK(loader.ReadRomFS(romfs) == Loader::ResultStatus::Success);
+}
+
 TEST_CASE("NX: a native base supports external updates and version disabling",
           "[core][nx][external]") {
     for (const auto archive : {"native_external_base.nx", "native_embedded_update.nx"}) {
@@ -341,15 +374,16 @@ TEST_CASE("NX: a native base supports external updates and version disabling",
             REQUIRE(provider.AddEntriesFromContainer(OpenFixture("external_update.nsp")));
             const FileSys::PatchManager patches{ApplicationId, system.GetFileSystemController(),
                                                 system.GetContentProvider()};
-            const auto build_byte = [&] {
-                const auto exefs = patches.PatchExeFS(base->GetExeFS());
+            const auto build_byte = [&](bool apply_update) {
+                const auto exefs = patches.PatchExeFS(base->GetExeFS(), apply_update);
                 REQUIRE(exefs != nullptr);
                 const auto main = exefs->GetFile("main");
                 REQUIRE(main != nullptr);
                 return main->ReadByte(64);
             };
             CHECK(data() == std::vector<u8>(4096, 0x33));
-            CHECK(build_byte() == 0x33);
+            CHECK(build_byte(true) == 0x33);
+            CHECK(build_byte(false) == 0x11);
             const auto previous = Settings::values.disabled_addons[ApplicationId];
             SCOPE_EXIT {
                 Settings::values.disabled_addons[ApplicationId] = previous;
@@ -358,7 +392,7 @@ TEST_CASE("NX: a native base supports external updates and version disabling",
             CHECK(data() ==
                   std::vector<u8>(
                       4096, std::string_view(archive) == "native_external_base.nx" ? 0x11 : 0x22));
-            CHECK(build_byte() ==
+            CHECK(build_byte(true) ==
                   (std::string_view(archive) == "native_external_base.nx" ? 0x11 : 0x22));
         }
     }
@@ -378,7 +412,7 @@ TEST_CASE("NX: registering an archive preserves an external NSP add-on", "[core]
             loader.RegisterContent(provider);
             const auto entries = provider.ListEntriesFilter(
                 FileSys::TitleType::AOC, FileSys::ContentRecordType::Data, std::nullopt);
-            REQUIRE(entries.size() == (std::string_view(archive) == "lichii_synthetic.nx" ? 2 : 1));
+            REQUIRE(entries.size() == (std::string_view(archive) == "lichii_synthetic.nx" ? 2U : 1U));
             const auto dlc =
                 provider.GetEntry(ApplicationId + 0x1002, FileSys::ContentRecordType::Data);
             REQUIRE(dlc != nullptr);

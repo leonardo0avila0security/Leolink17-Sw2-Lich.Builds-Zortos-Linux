@@ -29,7 +29,7 @@ struct NupDecompressCache;
  *   Table of Contents (packages, dir/file nodes, children array, string pool)
  *   Blob region (per-file extents, raw or zstd codec, 16-byte aligned)
  *
- * Per-package meta TLVs carry NPDM bytes, title names (default + localized),
+ * Per-package meta TLVs carry NPDM and NACP bytes, title names (default + localized),
  * icons and a display version. All integers little-endian.
  */
 class NupContainer {
@@ -57,6 +57,7 @@ public:
         u32 meta_size{};
 
         std::vector<u8> npdm;
+        std::vector<u8> nacp;
         std::string title_name;
         std::string publisher;
         std::string source_dump;
@@ -91,6 +92,8 @@ public:
     std::optional<std::size_t> FindBasePackage() const;
     /// Highest version among Update packages, if any.
     std::optional<std::size_t> FindBestUpdatePackage() const;
+    /// Highest version of the selected Switch 2 program's marked upgrade pack, if any.
+    std::optional<std::size_t> FindUpgradePack(u64 program_id);
 
     /// Opens a member file by node index; raw extents are zero-copy views into
     /// the container, zstd extents are decompressed only as far as reads reach,
