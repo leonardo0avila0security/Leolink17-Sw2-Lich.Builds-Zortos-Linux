@@ -225,14 +225,19 @@ public:
 };
 
 std::shared_ptr<SharedCodeCache> MakeSharedCodeCache() {
+#ifdef DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT
+    // Writing any block makes the whole code buffer non-executable.
+    return nullptr;
+#else
     return std::make_shared<SharedCodeCache>();
+#endif
 }
 
 struct Jit::Impl final {
 public:
     Impl(Jit*, UserConfig conf)
         : conf(conf)
-        , cache(conf.shared_code_cache ? conf.shared_code_cache : MakeSharedCodeCache())
+        , cache(conf.shared_code_cache ? conf.shared_code_cache : std::make_shared<SharedCodeCache>())
     {
         ASSERT(conf.page_table_address_space_bits >= 12 && conf.page_table_address_space_bits <= 64);
         cache->Attach(jit_state, running, conf, &GetCurrentBlockThunk, this);

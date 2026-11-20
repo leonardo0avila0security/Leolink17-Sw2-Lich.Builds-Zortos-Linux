@@ -347,6 +347,10 @@ if (TARGET dynarmic::dynarmic)
     # The shared code cache is x64 only.
     if (ARCHITECTURE_x86_64)
         target_sources(tests PRIVATE core/jit_shared_cache.cpp)
+        if (DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT)
+            set_property(SOURCE core/jit_shared_cache.cpp APPEND PROPERTY
+                COMPILE_DEFINITIONS DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT)
+        endif()
 
         # The shared code cache test on its own for ThreadSanitizer: configure a separate build with
         # -DCMAKE_C_FLAGS=-fsanitize=thread -DCMAKE_CXX_FLAGS=-fsanitize=thread (dynarmic must be

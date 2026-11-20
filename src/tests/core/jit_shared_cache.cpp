@@ -174,10 +174,38 @@ void RunToSvc(A64::Jit& jit, Env& env) {
 
 } // namespace
 
+TEST_CASE("W^X Jits keep private code caches", "[jit_shared_cache_gate]") {
+    Guest guest;
+    ExclusiveMonitor monitor{2};
+    const auto cache = A64::MakeSharedCodeCache();
+#ifdef DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT
+    REQUIRE_FALSE(cache);
+#else
+    REQUIRE(cache);
+#endif
+
+    Env first{guest};
+    Env second{guest};
+    A64::Jit jit1{Config(first, monitor, cache, 0)};
+    A64::Jit jit2{Config(second, monitor, cache, 1)};
+    first.jit = &jit1;
+    second.jit = &jit2;
+    for (auto* env : {&first, &second}) {
+        env->jit->SetPC(0);
+        RunToSvc(*env->jit, *env);
+        REQUIRE(env->svc == 2);
+    }
+    CHECK(first.counters.blocks_compiled == 1);
+    CHECK(second.counters.blocks_compiled == (cache ? 0 : 1));
+}
+
 TEST_CASE("Jits on one code cache run while others compile, invalidate and clear", "[jit_shared_cache]") {
     Guest guest;
     ExclusiveMonitor monitor{Runners + 1};
     const auto cache = A64::MakeSharedCodeCache();
+    if (!cache) {
+        SKIP("This build does not share executable memory");
+    }
 
     std::vector<std::unique_ptr<Env>> envs;
     std::vector<std::unique_ptr<A64::Jit>> jits;
