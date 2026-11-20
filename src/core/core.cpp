@@ -74,6 +74,7 @@
 #include "core/hle/service/sm/sm.h"
 #include "core/internal_network/local_redirect.h"
 #include "core/internal_network/network.h"
+#include "core/loader/deconstructed_rom_directory.h"
 #include "core/loader/loader.h"
 #include "core/loader/nx.h"
 #include "core/memory.h"
@@ -138,7 +139,7 @@ FileSys::VirtualFile GetGameFileFromPath(const FileSys::VirtualFilesystem& vfs,
     }
 
     if (Common::FS::IsDir(path)) {
-        return vfs->OpenFile(path + "/main", FileSys::OpenMode::Read);
+        return Loader::ResolveLooseProgram(vfs->OpenDirectory(path, FileSys::OpenMode::Read));
     }
 
     return vfs->OpenFile(path, FileSys::OpenMode::Read);
@@ -164,20 +165,9 @@ std::optional<u64> FindSwitch2Program(const FileSys::VirtualFile& file, u64 prog
     FileSys::ProgramMetadata metadata;
     if (FileSys::NupContainer::IsNupFile(file)) {
         FileSys::NupContainer nup{file};
-        if (nup.GetStatus() != Loader::ResultStatus::Success) {
-            return std::nullopt;
-        }
-        const auto base = nup.FindBasePackage();
-        const auto update = nup.FindBestUpdatePackage();
-        std::optional<std::size_t> program;
-        if (update && nup.GetExeFSDir(*update) != nullptr) {
-            program = update;
-        } else if (base && nup.GetExeFSDir(*base) != nullptr) {
-            program = base;
-        }
-        const auto exefs = program ? nup.GetExeFSDir(*program) : nullptr;
-        const auto npdm = exefs != nullptr ? exefs->GetFile("main.npdm") : nullptr;
-        return Switch2ProgramId(metadata, npdm);
+        const auto program = nup.SelectProgram();
+        return program ? Switch2ProgramId(metadata, program->exefs->GetFile("main.npdm"))
+                       : std::nullopt;
     }
     const auto type = file != nullptr ? Loader::IdentifyFile(file) : Loader::FileType::Unknown;
     if (type == Loader::FileType::NX) {
