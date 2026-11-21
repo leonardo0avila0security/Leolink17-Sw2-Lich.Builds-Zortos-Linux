@@ -49,13 +49,12 @@ extern "C" int fritchii_oot_no_sharpening(void) {
            Settings::values.oot_anti_aliasing.GetValue() == Settings::OotAntiAliasing::NoSharpening;
 }
 
-// Ocarina of Time's movies: the bilinear copy in place of the game's movie network (oot_movie_upscale,
-// as kepler_compute.cpp OotMovieNetworkChosen; Automatic picks the copy: the replay emulates tensor operations)
+// Ocarina of Time's movies: the bilinear copy in place of the game's movie network, opt-in with
+// EDEN_NX2_OOT_MOVIE_NETWORK=0 (Lichii has no movie upscale setting; the game's network by default)
 extern "C" int fritchii_oot_movie_bilinear(void) {
     if (Settings::GetCurrentProgramID() != VideoCommon::OotNetwork::ProgramId) return 0;
     const char* const env = std::getenv("EDEN_NX2_OOT_MOVIE_NETWORK");
-    if (env != nullptr && (env[0] == '0' || env[0] == '1')) return env[0] == '0';
-    return Settings::values.oot_movie_upscale.GetValue() != Settings::OotMovieUpscale::Game;
+    return env != nullptr && env[0] == '0';
 }
 
 // Ocarina of Time's fog: its readers' light colours as the game submitted them (vka_draw.c fog_bind);
@@ -65,3 +64,6 @@ extern "C" int fritchii_oot_fog_snapshot(void) {
     const char* const env = std::getenv("EDEN_NX2_OOT_FOG_SNAPSHOT");
     return env == nullptr || env[0] != '0';
 }
+
+// Stall attribution hook of the replay (Fritchii's Hitch line); Lichii has no Hitch logger, so it is unused
+extern "C" void fritchii_hitch_add(int, unsigned long long) {}
