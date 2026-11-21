@@ -36,7 +36,7 @@ constexpr u32 LSFG_RECURRENCE_FRAMES = 2;
 constexpr auto ACTIVITY_LOG_INTERVAL = std::chrono::seconds(10);
 
 [[nodiscard]] std::string ModeText(Settings::FrameGenType active) {
-    const char* type = active == Settings::FrameGenType::Fsr3      ? "FSR3"
+    const char* type = active == Settings::FrameGenType::OpticalFlow      ? "optical flow"
                        : active == Settings::FrameGenType::FlyHigh ? "FlyHigh"
                                                                    : "LSFG";
     const u32 target_rate = Settings::values.frame_gen_target_rate.GetValue();
@@ -269,7 +269,7 @@ void FrameGen::Process(const Device& device, Frame* frame, VkFormat format,
     const bool flyhigh_blocked = type == Settings::FrameGenType::FlyHigh &&
                                  FlyHighBlocked(VkExtent2D{frame->width, frame->height}, format);
     if (flyhigh_blocked) {
-        type = Settings::FrameGenType::Fsr3;
+        type = Settings::FrameGenType::OpticalFlow;
     }
     if (type == Settings::FrameGenType::Lsfg && !shaders) {
         shaders.emplace(device);
@@ -284,10 +284,10 @@ void FrameGen::Process(const Device& device, Frame* frame, VkFormat format,
         } else if (nvidia_frame_gen) {
             SetState(VideoCore::FrameGenState::NvidiaFrameGen, format);
         }
-        if (chain || fsr3_chain || HasFlyHigh()) {
+        if (chain || optical_flow_chain || HasFlyHigh()) {
             scheduler.Finish();
             chain.reset();
-            fsr3_chain.reset();
+            optical_flow_chain.reset();
             ResetFlyHigh();
         }
         warm_streak = 0;
@@ -314,7 +314,7 @@ void FrameGen::Process(const Device& device, Frame* frame, VkFormat format,
 
     const f32 flow_scale = ConfiguredFlowScale(peak_guest_extent, extent);
     // FlyHigh has no flow scale: rebuilding it would only cost a warm-up.
-    if ((!chain && !fsr3_chain && !HasFlyHigh()) || built_type != type ||
+    if ((!chain && !optical_flow_chain && !HasFlyHigh()) || built_type != type ||
         built_extent.width != extent.width || built_extent.height != extent.height ||
         built_format != format || (built_flow_scale != flow_scale && !use_flyhigh) ||
         FlyHighSettingsChanged()) {
@@ -334,11 +334,11 @@ void FrameGen::Process(const Device& device, Frame* frame, VkFormat format,
     generated_frames.fetch_add(GeneratedFrameCount(), std::memory_order_relaxed);
     LogActivity();
 
-    const bool use_fsr3 = type == Settings::FrameGenType::Fsr3;
+    const bool use_optical_flow = type == Settings::FrameGenType::OpticalFlow;
 
-    if (use_fsr3 && fsr3_chain) {
+    if (use_optical_flow && optical_flow_chain) {
         scheduler.RequestOutsideRenderPassOperationContext();
-        fsr3_chain->Process(device, scheduler, *frame->image, *frame->storage_view, count);
+        optical_flow_chain->Process(device, scheduler, *frame->image, *frame->storage_view, count);
 #ifdef HAS_FLYHIGH
     } else if (flyhigh) {
         const size_t wanted = GeneratedFrameCount();
@@ -386,8 +386,8 @@ void FrameGen::SetState(VideoCore::FrameGenState new_state, VkFormat format) {
         if (Settings::values.frame_gen_type.GetValue() == Settings::FrameGenType::NvidiaDlssG) {
             LOG_INFO(Render_Vulkan,
                      "Frame generation: NVIDIA DLSS-G unavailable ({}), using {}, presenting {}",
-                     DlssgBlockedText(DlssgBlocked()), ModeText(Settings::FrameGenType::Fsr3),
-                     string_VkFormat(format));
+                     DlssgBlockedText(DlssgBlocked()),
+                     ModeText(Settings::FrameGenType::OpticalFlow), string_VkFormat(format));
             break;
         }
         LOG_INFO(Render_Vulkan, "Frame generation on: {}, presenting {}",
@@ -411,7 +411,7 @@ void FrameGen::SetState(VideoCore::FrameGenState new_state, VkFormat format) {
     case VideoCore::FrameGenState::MissingLosslessDll:
         LOG_WARNING(Render_Vulkan,
                     "Frame generation is on but not running: LSFG needs Lossless.dll in the "
-                    "lossless folder of the user directory. FSR3 needs nothing");
+                    "lossless folder of the user directory. Optical flow needs nothing");
         break;
     case VideoCore::FrameGenState::MissingFlyHigh:
 #ifdef HAS_FLYHIGH
@@ -419,16 +419,16 @@ void FrameGen::SetState(VideoCore::FrameGenState new_state, VkFormat format) {
                     VideoCore::FrameGen::FlyHighModelInstalled()
                         ? "it could not start, above"
                         : "its model is not downloaded",
-                    ModeText(Settings::FrameGenType::Fsr3));
+                    ModeText(Settings::FrameGenType::OpticalFlow));
 #else
         LOG_WARNING(Render_Vulkan, "Frame generation: this build has no FlyHigh, using {}",
-                    ModeText(Settings::FrameGenType::Fsr3));
+                    ModeText(Settings::FrameGenType::OpticalFlow));
 #endif
         break;
     case VideoCore::FrameGenState::UnsupportedGpu:
         LOG_WARNING(Render_Vulkan,
                     "Frame generation is on but not running: this GPU lacks Vulkan features LSFG "
-                    "needs. FSR3 may still work");
+                    "needs. Optical flow may still work");
         break;
     default:
         break;
@@ -455,7 +455,8 @@ void FrameGen::LogActivity() {
         if (activity.generated == 0) {
             LOG_INFO(Render_Vulkan,
                      "Frame generation ({}) idle: {:.0f} game FPS, no frames generated. It waits "
-                     "while the game is below 10 FPS, after hitches and once the target is met",
+                     "while the game is below 10 FPS, after hitches, once the target is met and "
+                     "while the display takes no more presents",
                      ModeText(built_type), static_cast<f32>(activity.frames) / seconds);
         } else {
             LOG_INFO(Render_Vulkan,
@@ -471,13 +472,14 @@ void FrameGen::LogActivity() {
     activity.generated = 0;
 }
 
-size_t FrameGen::WantedGenerations(size_t capacity,
+size_t FrameGen::WantedGenerations(size_t capacity, size_t free_frames,
                                    std::chrono::steady_clock::duration blocked) {
     if (unavailable) {
         plan = {};
         return 0;
     }
     plan = pacer.Plan(capacity, blocked);
+    plan.generations = GenerationsWithoutWaiting(plan.generations, free_frames);
     return plan.generations;
 }
 
@@ -486,7 +488,7 @@ size_t FrameGen::GeneratedFrameCount() const {
 }
 
 void FrameGen::GenerateInto(const Device& device, Frame* destination, size_t generation) {
-    const bool use_fsr3 = built_type == Settings::FrameGenType::Fsr3;
+    const bool use_optical_flow = built_type == Settings::FrameGenType::OpticalFlow;
 
 #ifdef HAS_FLYHIGH
     if (flyhigh) {
@@ -494,13 +496,13 @@ void FrameGen::GenerateInto(const Device& device, Frame* destination, size_t gen
         return;
     }
 #endif
-    if (use_fsr3 && fsr3_chain) {
+    if (use_optical_flow && optical_flow_chain) {
         const f32 blend = static_cast<f32>(generation + 1) / static_cast<f32>(last_generations + 1);
         const f32 flow_scale = ConfiguredFlowScale(peak_guest_extent, built_extent);
 
         scheduler.RequestOutsideRenderPassOperationContext();
-        fsr3_chain->Generate(device, scheduler, *destination->image, *destination->storage_view,
-                             blend, flow_scale);
+        optical_flow_chain->Generate(device, scheduler, *destination->image,
+                                     *destination->storage_view, blend, flow_scale);
     } else if (chain) {
         chain->SetTarget(device, last_generations, generation, destination->index,
                          *destination->storage_view);
@@ -569,14 +571,14 @@ void FrameGen::Rebuild(const Device& device, VkExtent2D extent, VkFormat format,
                        Settings::FrameGenType type) {
     scheduler.Finish();
     chain.reset();
-    fsr3_chain.reset();
+    optical_flow_chain.reset();
     ResetFlyHigh();
 
     built_flow_scale = flow_scale;
     built_type = type;
 
-    if (built_type == Settings::FrameGenType::Fsr3) {
-        fsr3_chain.emplace(device, memory_allocator, extent, format);
+    if (built_type == Settings::FrameGenType::OpticalFlow) {
+        optical_flow_chain.emplace(device, memory_allocator, extent, format);
     } else if (built_type == Settings::FrameGenType::FlyHigh) {
 #ifdef HAS_FLYHIGH
         built_protect_hud = Settings::values.frame_gen_flyhigh_protect_hud.GetValue();
