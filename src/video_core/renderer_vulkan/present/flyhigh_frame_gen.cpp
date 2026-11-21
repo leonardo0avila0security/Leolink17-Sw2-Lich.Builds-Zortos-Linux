@@ -117,12 +117,12 @@ bool IsSrgb(VkFormat format) {
 
 FlyHighFrameGen::FlyHighFrameGen(const Device& device_, MemoryAllocator& memory_allocator,
                                  VkExtent2D extent_, VkFormat format, bool protect_hud)
-    : fh{[]() -> const VideoCore::FrameGen::FlyHighLibrary& {
+    : fh{*[] {
           const auto* library = VideoCore::FrameGen::LoadFlyHighLibrary();
           if (library == nullptr) {
               Fail("the FlyHigh library is missing or too old");
           }
-          return *library;
+          return library;
       }()},
       device{device_}, extent{extent_} {
     try {

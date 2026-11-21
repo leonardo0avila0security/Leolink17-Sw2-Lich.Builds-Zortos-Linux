@@ -29,10 +29,16 @@ struct Loaded {
 };
 
 std::optional<Loaded> Load() {
-    const std::filesystem::path path = Common::FS::GetExeDirectory() / LIBRARY_NAME;
+#ifdef _WIN32
+    const auto directory = Common::FS::GetExeDirectory();
+#else
+    std::error_code ec;
+    const auto directory = std::filesystem::read_symlink("/proc/self/exe", ec).parent_path();
+#endif
     Loaded loaded;
     // Beside the executable first, then the system's search path (a distribution's package).
-    if (!loaded.library.Open(Common::FS::PathToUTF8String(path).c_str()) &&
+    if ((directory.empty() ||
+         !loaded.library.Open(Common::FS::PathToUTF8String(directory / LIBRARY_NAME).c_str())) &&
         !loaded.library.Open(LIBRARY_NAME)) {
         LOG_WARNING(Render_Vulkan, "FlyHigh: {} not found beside Lichii", LIBRARY_NAME);
         return std::nullopt;
