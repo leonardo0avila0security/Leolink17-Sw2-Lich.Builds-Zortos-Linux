@@ -132,6 +132,9 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --output-on-failure --no-tests=error --parallel "$(nproc)"
 
+      - name: Load the bundled FlyHigh library
+        run: python3 -c 'import ctypes; ctypes.CDLL("./build/bin/libflyhigh.so").fh_engine_create'
+
       - name: Test debug adapter
         run: python3 tools/nx2/test_debug_mcp.py
 

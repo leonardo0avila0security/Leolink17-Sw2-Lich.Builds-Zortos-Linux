@@ -729,26 +729,39 @@ endif()
 cmake_dependent_option(ENABLE_FLYHIGH "Enable FlyHigh frame generation" ON
                        "ENABLE_LSFG;ARCHITECTURE_x86_64;NOT APPLE;NOT ANDROID" OFF)
 set(LICHII_FLYHIGH_SDK "" CACHE PATH
-    "FlyHigh engine release directory with include/ and lib/ (empty: download the release)")
+    "FlyHigh SDK with include/ and lib/ (empty: use the Windows release or build on Linux)")
 if (ENABLE_FLYHIGH)
     if (LICHII_FLYHIGH_SDK)
         set(FLYHIGH_DIR "${LICHII_FLYHIGH_SDK}")
         cpmutil_register_package(flyhigh "https://github.com/getflyhigh/flyhigh-engine"
                                  "local (${LICHII_FLYHIGH_SDK})")
+    elseif (WIN32)
+        AddJsonPackage(NAME flyhigh-windows DOWNLOAD_ONLY)
+        set(FLYHIGH_DIR "${flyhigh-windows_SOURCE_DIR}")
     else()
-        # The engine's release archive for this platform: its header and library.
-        if (WIN32)
-            AddJsonPackage(NAME flyhigh-windows DOWNLOAD_ONLY)
-            set(FLYHIGH_DIR "${flyhigh-windows_SOURCE_DIR}")
-        else()
-            AddJsonPackage(NAME flyhigh-linux DOWNLOAD_ONLY)
-            set(FLYHIGH_DIR "${flyhigh-linux_SOURCE_DIR}")
-        endif()
+        # The upstream binary requires glibc 2.43. Build on the same system as Lichii.
+        find_program(FLYHIGH_CARGO cargo REQUIRED)
+        AddJsonPackage(NAME flyhigh-linux-source DOWNLOAD_ONLY)
+        set(FLYHIGH_SOURCE "${flyhigh-linux-source_SOURCE_DIR}")
+        set(FLYHIGH_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/flyhigh")
+        set(FLYHIGH_INCLUDE_DIR "${FLYHIGH_SOURCE}/crates/flyhigh-capi/include")
+        set_property(GLOBAL PROPERTY FLYHIGH_LICENSE_DIR "${FLYHIGH_SOURCE}")
+        set(FLYHIGH_LIBRARY "${FLYHIGH_BUILD_DIR}/release/libflyhigh.so")
+        add_custom_command(OUTPUT "${FLYHIGH_LIBRARY}"
+            COMMAND "${FLYHIGH_CARGO}" build --release --locked --package flyhigh-capi
+                    --manifest-path "${FLYHIGH_SOURCE}/Cargo.toml"
+                    --target-dir "${FLYHIGH_BUILD_DIR}"
+            DEPENDS "${FLYHIGH_SOURCE}/Cargo.toml" "${FLYHIGH_SOURCE}/Cargo.lock"
+            VERBATIM)
+        add_custom_target(flyhigh_linux DEPENDS "${FLYHIGH_LIBRARY}")
     endif()
-    if (WIN32)
-        set(FLYHIGH_LIBRARY "${FLYHIGH_DIR}/lib/flyhigh.dll")
-    else()
-        set(FLYHIGH_LIBRARY "${FLYHIGH_DIR}/lib/libflyhigh.so")
+    if (FLYHIGH_DIR)
+        set(FLYHIGH_INCLUDE_DIR "${FLYHIGH_DIR}/include")
+        if (WIN32)
+            set(FLYHIGH_LIBRARY "${FLYHIGH_DIR}/lib/flyhigh.dll")
+        else()
+            set(FLYHIGH_LIBRARY "${FLYHIGH_DIR}/lib/libflyhigh.so")
+        endif()
     endif()
     set_property(GLOBAL PROPERTY FLYHIGH_LIBRARY "${FLYHIGH_LIBRARY}")
     target_sources(video_core PRIVATE
@@ -758,7 +771,7 @@ if (ENABLE_FLYHIGH)
         renderer_vulkan/present/flyhigh_frame_gen.cpp
         renderer_vulkan/present/flyhigh_frame_gen.h
     )
-    target_include_directories(video_core PRIVATE "${FLYHIGH_DIR}/include")
+    target_include_directories(video_core PRIVATE "${FLYHIGH_INCLUDE_DIR}")
     target_compile_definitions(video_core PUBLIC HAS_FLYHIGH)
     message(STATUS "FlyHigh frame generation: ${FLYHIGH_LIBRARY}")
 endif()

@@ -583,6 +583,10 @@ jobs:
           export ARCH="$arch"
           mkdir -p AppDir/usr/bin AppDir/usr/share/licenses
           cp build/release/bin/nx2_switches.txt AppDir/usr/bin/
+          if [ -f build/release/bin/libflyhigh.so ]; then
+            cp build/release/bin/libflyhigh.so AppDir/usr/bin/
+            cp -r build/release/bin/licenses/flyhigh AppDir/usr/share/licenses/
+          fi
           # The emulator loads fsr4-vk from <exe dir>/../lib (FfxRuntime::PortLibrary).
           fsr4=amd_fidelityfx_upscaler_vk.so
           fsr4_library=()

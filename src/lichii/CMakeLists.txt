@@ -485,9 +485,22 @@ endif()
 # FlyHigh frame generation loads its library from beside the executable.
 get_property(FLYHIGH_LIBRARY GLOBAL PROPERTY FLYHIGH_LIBRARY)
 if (FLYHIGH_LIBRARY)
+    if (TARGET flyhigh_linux)
+        add_dependencies(lichii flyhigh_linux)
+    endif()
+    set_property(TARGET lichii APPEND PROPERTY LINK_DEPENDS "${FLYHIGH_LIBRARY}")
     add_custom_command(TARGET lichii POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FLYHIGH_LIBRARY}" "$<TARGET_FILE_DIR:lichii>"
         VERBATIM)
+    get_property(FLYHIGH_LICENSE_DIR GLOBAL PROPERTY FLYHIGH_LICENSE_DIR)
+    if (FLYHIGH_LICENSE_DIR)
+        add_custom_command(TARGET lichii POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:lichii>/licenses/flyhigh"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${FLYHIGH_LICENSE_DIR}/LICENSE" "${FLYHIGH_LICENSE_DIR}/NOTICE"
+                    "$<TARGET_FILE_DIR:lichii>/licenses/flyhigh"
+            VERBATIM)
+    endif()
 endif()
 
 if (ENABLE_WEB_SERVICE)
@@ -506,6 +519,9 @@ endif ()
 
 if(UNIX AND NOT APPLE)
     install(TARGETS lichii)
+    if (FLYHIGH_LIBRARY)
+        install(FILES "${FLYHIGH_LIBRARY}" TYPE BIN)
+    endif()
 endif()
 
 if (WIN32 AND NOT LICHII_USE_BUNDLED_QT)

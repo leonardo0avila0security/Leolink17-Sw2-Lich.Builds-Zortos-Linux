@@ -95,11 +95,10 @@
         "repo": "Djihads80/Eglantine",
         "version": "9.0.2-av1-mingw-1"
     },
-    "flyhigh-linux": {
-        "artifact": "flyhigh-%VERSION%-linux-x86_64.tar.gz",
+    "flyhigh-linux-source": {
         "bundled": true,
-        "hash": "0bec2bf9c3ad2c3ff95c3e3a6907c9cec9b050179dc04336ea87773eaf9c86db9e731f01f369e788df4cbba49f438e765ba7788e40ac115dadc2727fb2338e9f",
-        "repo": "getflyhigh/flyhigh-engine",
+        "hash": "cf156192340f0a657c5106b044f55836a147749c17b2ca838889c4ea00bb4c601830f894a1f27d070947354e296084872f86bb30d4ee4c0961ffcdc3b24999c8",
+        "url": "https://github.com/getflyhigh/flyhigh-engine/archive/34c3fb6383b5d94146cd36878482367f49bb06dc.tar.gz",
         "version": "v0.5.1"
     },
     "flyhigh-windows": {
