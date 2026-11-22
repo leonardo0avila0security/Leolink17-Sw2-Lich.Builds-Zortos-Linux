@@ -24,6 +24,7 @@ jobs:
       pull-requests: read
     outputs:
       build: ${{ steps.files.outputs.build }}
+      mod-store-docs: ${{ steps.files.outputs.mod-store-docs }}
     steps:
       - name: Skip builds for documentation-only pull requests
         id: files
@@ -32,13 +33,41 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           build=true
+          mod_store_docs=true
           if [ -n "$PR" ]; then
             files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
-            if ! printf '%s\n' "$files" | grep -qvE '^(docs/.*|.*\.md)$'; then
+            if ! printf '%s\n' "$files" | grep -qvE '^(docs/.*|docs-site/mod-store-api/.*|.*\.md)$'; then
               build=false
+            fi
+            if ! printf '%s\n' "$files" | grep -qE '^(docs-site/mod-store-api/.*|\.github/workflows/build-check\.yml)$'; then
+              mod_store_docs=false
             fi
           fi
           echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "mod-store-docs=$mod_store_docs" >> "$GITHUB_OUTPUT"
+
+  mod-store-docs:
+    name: Mod Store API docs build and link check
+    needs: changes
+    if: needs.changes.outputs.mod-store-docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ASTRO_TELEMETRY_DISABLED: '1'
+    defaults:
+      run:
+        working-directory: docs-site/mod-store-api
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: docs-site/mod-store-api/package-lock.json
+      - run: npm ci
+      - run: npm run build
 
   linux-gcc:
     name: Linux GCC 13 production build and tests
