@@ -1583,7 +1583,8 @@ void RasterizerVulkan::NoteOcarinaDraw(const GraphicsPipeline& pipeline) {
     // move on their own, so FSR must not take them from its history. DLSS doesn't use the mask.
     constexpr u64 fog_fragment = 0x3ddfb1d7a854c849ULL;
     if (hashes[5] == fog_fragment && oot_live_dlss && OcarinaTemporalEnabled() &&
-        oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr &&
+        (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+         oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess) &&
         oot_camera_sample_frame == render_trace_frame && !frame_dump.Capturing()) {
         const auto scene_id = texture_cache.GetRenderTargets().color_buffer_ids[0];
         if (scene_id) {
@@ -3379,8 +3380,8 @@ void RasterizerVulkan::PlayUnlentDispatch(UnlentDispatch& dispatch) {
     const bool direct = !dispatch.indirect && !dispatch.list_slot;
     // Until a dispatch overwrites the scene, each direct one binds only after the effects are
     // marked.
-    const bool marking_effects =
-        direct && oot_effects_frame == render_trace_frame && OcarinaTemporalEnabled();
+    const bool marking_effects = direct && oot_effects_frame == render_trace_frame &&
+        OcarinaTemporalEnabled() && oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr;
     ComputePipeline::BindCommand deferred_bind;
     bool configured;
     {
@@ -3495,8 +3496,9 @@ void RasterizerVulkan::DispatchCompute() {
     // Until a dispatch overwrites the scene, each direct one binds only after the effects are
     // marked. The indirect path records its bind at once.
     const bool marking_effects = oot_effects_frame == render_trace_frame &&
-                                 OcarinaTemporalEnabled() && !indirect_address && !list_slot &&
-                                 !frame_dump.Capturing();
+                                 OcarinaTemporalEnabled() &&
+                                 oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr &&
+                                 !indirect_address && !list_slot && !frame_dump.Capturing();
     ComputePipeline::BindCommand deferred_bind;
     switch (pipeline->Configure(*kepler_compute, *gpu_memory, scheduler, buffer_cache,
                                 texture_cache, texture_cache_runtime, pipeline_cache,
@@ -5157,7 +5159,8 @@ void RasterizerVulkan::ApplyOcarinaCamera(const ImageView& color, const OcarinaC
         return;
     }
     const bool allow_padding = oot_backend == VideoCommon::OcarinaUpscaleBackend::Dlss ||
-                               oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr;
+                               oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+                               oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess;
     const auto& values = facts.values;
     const auto camera = VideoCommon::DecodeOcarinaCamera(
         values, color.size.width, color.size.height, allow_padding);
@@ -5552,40 +5555,37 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
         const auto resolved_output =
             Settings::OcarinaUpscaleOutputResolution(window_extent.width, window_extent.height);
         VkExtent2D independent_output{resolved_output.width, resolved_output.height};
-        if (independent_output.width < extent.width || independent_output.height < extent.height) {
-            independent_output = extent;
-        }
-        const f64 ratio_width = independent_output.width > 0
-            ? static_cast<f64>(independent_output.width) / static_cast<f64>(extent.width)
-            : 1.0;
-        const f64 ratio_height = independent_output.height > 0
-            ? static_cast<f64>(independent_output.height) / static_cast<f64>(extent.height)
-            : 1.0;
-        const f64 resolved_ratio = std::max(ratio_width, ratio_height);
-        const f64 max_ratio = oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess
-            ? 3.0 : 4.0;
-        if (resolved_ratio > max_ratio && oot_backend ==
-            (VideoCommon::OcarinaUpscaleBackend::Xess)) {
-            independent_output = {static_cast<u32>(std::llround(extent.width * max_ratio)),
-                                  static_cast<u32>(std::llround(extent.height * max_ratio))};
-            LOG_WARNING(Render_Vulkan,
-                        "Ocarina XeSS upscale ratio {:.2f} exceeded 3.0; clamped output to {}x{}",
-                        resolved_ratio, independent_output.width, independent_output.height);
-        } else if (resolved_ratio > max_ratio) {
-            independent_output = {static_cast<u32>(std::llround(extent.width * max_ratio)),
-                                  static_cast<u32>(std::llround(extent.height * max_ratio))};
-            LOG_WARNING(Render_Vulkan,
-                        "Ocarina FSR upscale ratio {:.2f} exceeded 4.0; clamped output to {}x{}",
-                        resolved_ratio, independent_output.width, independent_output.height);
+        if (independent_output.width == 0 || independent_output.height == 0) {
+            independent_output = target_extent;
         }
         const VkExtent2D output_extent =
             native_resolution ? extent
-            : new_output_setting ? independent_output
+            : new_output_setting &&
+                      (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+                       oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess)
+                ? independent_output
             : window_sized_output ? window_extent
             : upscale_4k ? VkExtent2D{3840, 2160}
                          : target_extent;
+        VkExtent2D fsr_output_extent = output_extent;
+        if (fsr_output_extent.width < extent.width || fsr_output_extent.height < extent.height) {
+            fsr_output_extent = extent;
+        }
+        const f64 fsr_ratio = std::max(
+            static_cast<f64>(fsr_output_extent.width) / extent.width,
+            static_cast<f64>(fsr_output_extent.height) / extent.height);
+        if (fsr_ratio > 4.0) {
+            fsr_output_extent = {static_cast<u32>(std::llround(extent.width * 4.0)),
+                                 static_cast<u32>(std::llround(extent.height * 4.0))};
+            LOG_WARNING(Render_Vulkan,
+                        "Ocarina FSR reconstruction ratio {:.2f} exceeded 4.0; clamped to {}x{}",
+                        fsr_ratio, fsr_output_extent.width, fsr_output_extent.height);
+        }
+        const bool xess_eligible = oot_backend != VideoCommon::OcarinaUpscaleBackend::Xess ||
+            (extent.width == color.size.width && extent.height == color.size.height);
         const bool recorded = oot_live_dlss->Record(color_view, depth.DepthView(), target_view,
-                                                   extent, output_extent, target_extent, oot_motion.current,
+                                                   extent, output_extent, fsr_output_extent,
+                                                   xess_eligible, target_extent, oot_motion.current,
                                                    oot_motion.previous, mesh, depth.ImageHandle(),
                                                    render_trace_frame, jitter,
                                                    {depth.size.width, depth.size.height});
@@ -5602,10 +5602,11 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
             oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess ? "XeSS"
             : oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ? "FSR 3.1"
                                                                      : "Off";
-        const VkExtent2D xess_output = oot_live_dlss->XessOutputExtent();
         const bool used_xess = oot_live_dlss->UsedXeSS();
+        const VkExtent2D xess_output = used_xess ? oot_live_dlss->XessOutputExtent()
+                                                 : VkExtent2D{};
         const f32 log_ratio = static_cast<f32>(
-            used_xess && xess_output.width != 0 ? xess_output.width : output_extent.width) /
+            used_xess && xess_output.width != 0 ? xess_output.width : fsr_output_extent.width) /
             static_cast<f32>(std::max(extent.width, 1U));
         static u64 logged_contract_frame{};
         if (logged_contract_frame != render_trace_frame) {
@@ -6050,12 +6051,17 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
     info.height = image_view->size.height;
     info.scaled_width = scaled ? resolution.ScaleUp(info.width) : info.width;
     info.scaled_height = scaled ? resolution.ScaleUp(info.height) : info.height;
-    info.anti_aliased = oot_dlss_frame == render_trace_frame && !oot_live_dlss->EvaluationFailed();
+    const bool xess_succeeded = oot_live_dlss && oot_live_dlss->UsedXeSS() &&
+                                oot_live_dlss->EvaluationSucceededThisFrame();
+    const bool replacement_succeeded = oot_dlss_frame == render_trace_frame && oot_live_dlss &&
+        !oot_live_dlss->EvaluationFailed() && !oot_live_dlss->EvaluationFailedThisFrame() &&
+        (!oot_live_dlss->UsedXeSS() || xess_succeeded);
+    info.anti_aliased = replacement_succeeded;
     if (oot_4k_scene_frame == render_trace_frame && info.image &&
         info.image == oot_4k_guest_present && info.image_view &&
         info.width == 2560 && info.height == 1440 && !scaled &&
         image_view->format == VideoCore::Surface::PixelFormat::A8B8G8R8_UNORM &&
-        !oot_live_dlss->EvaluationFailed() && !frame_dump.Capturing()) {
+        replacement_succeeded && !frame_dump.Capturing()) {
         try {
             oot_live_dlss->CompositeOutput(info.image_view, oot_temporal_output_extent,
                                            render_trace_frame);

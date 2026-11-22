@@ -64,11 +64,8 @@ void LogXeSS(const char* message, xess_logging_level_t level) {
     }
 }
 
-xess_quality_settings_t ToXeSSRatioQuality(VkExtent2D input, VkExtent2D output) {
-    if (input.width == 0 || input.height == 0 || output.width == 0 || output.height == 0 ||
-        (input.width == output.width && input.height == output.height)) {
-        return XESS_QUALITY_SETTING_AA;
-    }
+std::array<xess_quality_settings_t, 5> ToXeSSRatioQuality(VkExtent2D input,
+                                                          VkExtent2D output) {
     const double ratio_width = static_cast<double>(output.width) / input.width;
     const double ratio_height = static_cast<double>(output.height) / input.height;
     const double ratio = (ratio_width + ratio_height) * 0.5;
@@ -76,24 +73,21 @@ xess_quality_settings_t ToXeSSRatioQuality(VkExtent2D input, VkExtent2D output) 
         double ratio;
         xess_quality_settings_t quality;
     };
-    constexpr std::array presets{
-        Preset{1.30, XESS_QUALITY_SETTING_ULTRA_QUALITY},
-        Preset{1.50, XESS_QUALITY_SETTING_ULTRA_QUALITY},
+    std::array<Preset, 5> presets{{
+        Preset{1.40, XESS_QUALITY_SETTING_ULTRA_QUALITY},
         Preset{1.70, XESS_QUALITY_SETTING_QUALITY},
         Preset{2.00, XESS_QUALITY_SETTING_BALANCED},
         Preset{2.30, XESS_QUALITY_SETTING_PERFORMANCE},
         Preset{3.00, XESS_QUALITY_SETTING_ULTRA_PERFORMANCE},
-    };
-    const Preset* closest = &presets[0];
-    double closest_difference = std::abs(ratio - closest->ratio);
-    for (const auto& preset : presets) {
-        const double difference = std::abs(ratio - preset.ratio);
-        if (difference < closest_difference) {
-            closest = &preset;
-            closest_difference = difference;
-        }
+    }};
+    std::ranges::sort(presets, [ratio](const Preset& left, const Preset& right) {
+        return std::abs(ratio - left.ratio) < std::abs(ratio - right.ratio);
+    });
+    std::array<xess_quality_settings_t, 5> candidates{};
+    for (size_t index = 0; index < presets.size(); ++index) {
+        candidates[index] = presets[index].quality;
     }
-    return closest->quality;
+    return candidates;
 }
 
 xess_quality_settings_t ToXeSSQuality(Settings::XessQuality quality) {
@@ -300,43 +294,38 @@ struct XessUpscaler::Impl {
         api->set_logging_callback(context, XESS_LOGGING_LEVEL_WARNING, LogXeSS);
         xess_quality_settings_t sdk_quality =
             aa ? XESS_QUALITY_SETTING_AA : ToXeSSQuality(quality);
-        VkExtent2D xess_extent = output_extent;
-        const auto update_intermediate_extent = [&] {
-            if (!use_intermediate || aa) {
-                return true;
-            }
-            const xess_2d_t window_resolution{output_extent.width, output_extent.height};
-            xess_2d_t window_optimal{};
-            xess_2d_t ignored_minimum{};
-            xess_2d_t ignored_maximum{};
-            if (api->get_optimal_input_resolution(context, &window_resolution, sdk_quality,
-                                                  &window_optimal, &ignored_minimum,
-                                                  &ignored_maximum) != XESS_RESULT_SUCCESS ||
-                window_optimal.x == 0 || window_optimal.y == 0) {
-                return false;
-            }
-            const double scale =
-                (static_cast<double>(output_extent.width) / window_optimal.x +
-                 static_cast<double>(output_extent.height) / window_optimal.y) * 0.5;
-            xess_extent = ScaleExtentAtQualityRatio(input_size, scale);
-            return xess_extent.width != 0 && xess_extent.height != 0;
-        };
-        if (aa) {
-            xess_extent = input_size;
-        } else if (!update_intermediate_extent()) {
-            Fail("could not determine the selected quality mode's scale ratio");
-            return;
-        }
+        VkExtent2D xess_extent{};
         xess_2d_t optimal{};
         xess_2d_t minimum{};
         xess_2d_t maximum{};
-        const auto query_input_range = [&] {
+        const auto query_configuration = [&](xess_quality_settings_t candidate) {
+            sdk_quality = candidate;
+            xess_extent = aa ? input_size : output_extent;
+            if (use_intermediate && !aa) {
+                const xess_2d_t window_resolution{output_extent.width, output_extent.height};
+                xess_2d_t window_optimal{};
+                xess_2d_t ignored_minimum{};
+                xess_2d_t ignored_maximum{};
+                if (api->get_optimal_input_resolution(context, &window_resolution, sdk_quality,
+                                                      &window_optimal, &ignored_minimum,
+                                                      &ignored_maximum) != XESS_RESULT_SUCCESS ||
+                    window_optimal.x == 0 || window_optimal.y == 0) {
+                    return false;
+                }
+                const double scale =
+                    (static_cast<double>(output_extent.width) / window_optimal.x +
+                     static_cast<double>(output_extent.height) / window_optimal.y) * 0.5;
+                xess_extent = ScaleExtentAtQualityRatio(input_size, scale);
+                if (xess_extent.width == 0 || xess_extent.height == 0) {
+                    return false;
+                }
+            }
             const xess_2d_t output_resolution{xess_extent.width, xess_extent.height};
             return api->get_optimal_input_resolution(context, &output_resolution, sdk_quality,
                                                       &optimal, &minimum, &maximum) ==
                    XESS_RESULT_SUCCESS;
         };
-        if (!query_input_range()) {
+        if (!query_configuration(sdk_quality)) {
             Fail("could not determine the selected quality mode's input range");
             return;
         }
@@ -345,16 +334,31 @@ struct XessUpscaler::Impl {
                    input_size.width <= maximum.x && input_size.height <= maximum.y;
         };
         if (!aa && !input_fits()) {
-            sdk_quality = ToXeSSRatioQuality(input_size, output_extent);
-            if (use_intermediate && !update_intermediate_extent()) {
-                Fail("could not determine the ratio fallback's scale");
-                return;
+            const auto selected_quality = sdk_quality;
+            const auto selected_extent = xess_extent;
+            const auto selected_optimal = optimal;
+            const auto selected_minimum = minimum;
+            const auto selected_maximum = maximum;
+            bool found_supported_quality = false;
+            for (const xess_quality_settings_t candidate :
+                 ToXeSSRatioQuality(input_size, output_extent)) {
+                if (candidate == selected_quality || !query_configuration(candidate)) {
+                    continue;
+                }
+                if (input_fits()) {
+                    found_supported_quality = true;
+                    break;
+                }
             }
-            if (!query_input_range()) {
-                Fail("could not determine the ratio fallback's input range");
-                return;
+            if (!found_supported_quality) {
+                sdk_quality = selected_quality;
+                xess_extent = selected_extent;
+                optimal = selected_optimal;
+                minimum = selected_minimum;
+                maximum = selected_maximum;
             }
         }
+        const xess_2d_t output_resolution{xess_extent.width, xess_extent.height};
         optimal_input = optimal;
         minimum_input = minimum;
         maximum_input = maximum;
@@ -425,7 +429,6 @@ struct XessUpscaler::Impl {
             LOG_WARNING(Render_Vulkan, "XeSS-SR reports that the installed Intel driver is not optimal");
         }
         first_execution = true;
-        configured_input_size = input_size;
         configured_output_size = output_extent;
         configured_aa = aa;
         configured_intermediate = use_intermediate;
@@ -440,6 +443,9 @@ struct XessUpscaler::Impl {
     bool Execute(const Inputs& inputs) {
         const XeSS::Api* const api = XeSS::GetApi();
         if (!api || !context || failed.load(std::memory_order_acquire)) {
+            if (inputs.execution_failed) {
+                inputs.execution_failed->store(true, std::memory_order_release);
+            }
             return false;
         }
         const bool reset_history =
@@ -492,9 +498,16 @@ struct XessUpscaler::Impl {
             params.resetHistory = inputs.reset || first_execution || reset_history || input_size_changed;
             params.inputWidth = color_size.width;
             params.inputHeight = color_size.height;
-            const xess_result_t result = api->execute(context, *cmdbuf, &params);
-            const bool succeeded = result >= 0;
-            if (result < 0) {
+            xess_result_t result{};
+            if (failed.load(std::memory_order_acquire)) {
+                if (inputs.execution_failed) {
+                    inputs.execution_failed->store(true, std::memory_order_release);
+                }
+            } else {
+                result = api->execute(context, *cmdbuf, &params);
+            }
+            const bool succeeded = !failed.load(std::memory_order_acquire) && result >= 0;
+            if (!succeeded) {
                 if (inputs.execution_failed) {
                     inputs.execution_failed->store(true, std::memory_order_release);
                 }
@@ -503,6 +516,9 @@ struct XessUpscaler::Impl {
                             "XeSS frame evaluation failed");
                 failed.store(true, std::memory_order_release);
             } else {
+                if (inputs.execution_succeeded) {
+                    inputs.execution_succeeded->store(true, std::memory_order_release);
+                }
                 first_execution = false;
                 last_input_size = color_size;
                 if (intermediate_output) {
@@ -597,13 +613,10 @@ struct XessUpscaler::Impl {
         return difference <= std::max(input_size.width, input_size.height);
     }
 
-    bool ConfigurationMatches(VkExtent2D input, VkExtent2D output, bool aa,
-                              bool intermediate) const {
+    bool ConfigurationMatches(VkExtent2D output, bool aa, bool intermediate) const {
         return configured_output_size.width == output.width &&
                configured_output_size.height == output.height && configured_aa == aa &&
-               configured_intermediate == intermediate &&
-               (!intermediate || (configured_input_size.width == input.width &&
-                                  configured_input_size.height == input.height));
+               configured_intermediate == intermediate;
     }
 
     void Fail(std::string_view reason) {
@@ -634,7 +647,6 @@ struct XessUpscaler::Impl {
 #ifdef _WIN32
     xess_context_handle_t context{};
     VkExtent2D xess_output_size{};
-    VkExtent2D configured_input_size{};
     VkExtent2D configured_output_size{};
     VkExtent2D last_input_size{};
     xess_2d_t optimal_input{};
@@ -716,8 +728,7 @@ bool XessUpscaler::Upscale(const Inputs& inputs) {
         state.CreateOutput(inputs.output_size);
     }
     bool ready = state.ready.load(std::memory_order_acquire);
-    if (ready && !state.ConfigurationMatches(inputs.render_size, inputs.output_size,
-                                             use_aa, use_intermediate)) {
+    if (ready && !state.ConfigurationMatches(inputs.output_size, use_aa, use_intermediate)) {
         state.DestroyContext();
         ready = false;
     }
@@ -729,7 +740,8 @@ bool XessUpscaler::Upscale(const Inputs& inputs) {
                           state.InputMatchesAspect(inputs.render_size)
                               ? "input is outside XeSS's supported range"
                               : "input aspect ratio does not match the XeSS output");
-        return false;
+        state.DestroyContext();
+        ready = false;
     }
     if (!ready) {
         const bool same_rejected_dimensions =

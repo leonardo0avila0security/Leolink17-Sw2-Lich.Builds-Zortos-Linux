@@ -208,11 +208,11 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
                       "precedence when enabled and available. Takes effect when a game starts."));
         INSERT(Settings, ocarina_render_scale, tr("Ocarina render scale:"),
                tr("Legacy scale Ocarina of Time's internal render resolution. Keep this setting for "
-                  "backward compatibility; the independent Render Input setting supersedes it. "
-                  "Requires the Max Resolution (built-in) patch."));
+                                          "backward compatibility; the independent Render Input setting supersedes it."));
         INSERT(Settings, ocarina_render_input, tr("Ocarina render input:"),
                tr("Render resolution supplied to XeSS-SR or FSR 3.1. Legacy keeps the existing "
-                  "Ocarina render scale patches. Custom uses the width and height below. Takes "
+                                          "Ocarina render scale patches. Requires the Max Resolution (built-in) patch. "
+                                          "Custom uses the width below. Takes "
                   "effect when a game starts."));
         INSERT(Settings, ocarina_upscale_output, tr("Ocarina upscale output:"),
                tr("Resolution produced by XeSS-SR or FSR 3.1 before final window presentation. "
@@ -223,8 +223,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
                   "starts."));
         INSERT(Settings, ocarina_custom_input_width, tr("Custom render input width:"),
                tr("Horizontal render resolution for the Custom render input preset."));
-        INSERT(Settings, ocarina_custom_input_height, tr("Custom render input height:"),
-               tr("Vertical render resolution for the Custom render input preset."));
         INSERT(Settings, ocarina_custom_output_width, tr("Custom upscale output width:"),
                tr("Horizontal upscale resolution for the Custom upscale output preset."));
         INSERT(Settings, ocarina_custom_output_height, tr("Custom upscale output height:"),

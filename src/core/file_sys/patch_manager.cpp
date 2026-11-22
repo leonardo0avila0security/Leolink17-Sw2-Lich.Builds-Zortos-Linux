@@ -1744,7 +1744,7 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
             std::equal(RENDER_SCALE_ONE.begin(), RENDER_SCALE_ONE.end(),
                        out.begin() + module_offset)) {
             std::memcpy(out.data() + module_offset, bytes.data(), bytes.size());
-            if (scale >= 0.99f) {
+            if (scale == 1.0f) {
                 Settings::SetAppliedOcarinaRenderScale(Settings::OcarinaRenderScale::Scale100);
             } else if (std::abs(scale - 0.625f) < 0.001f) {
                 Settings::SetAppliedOcarinaRenderScale(Settings::OcarinaRenderScale::Scale625);

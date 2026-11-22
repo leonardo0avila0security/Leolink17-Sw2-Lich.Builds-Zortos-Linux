@@ -33,6 +33,7 @@ public:
         std::array<f32, 2> jitter{};
         bool reset{};
         std::shared_ptr<std::atomic<bool>> execution_failed;
+        std::shared_ptr<std::atomic<bool>> execution_succeeded;
     };
 
     XessUpscaler(const Device& device, Scheduler& scheduler, MemoryAllocator& memory_allocator,
@@ -42,7 +43,8 @@ public:
     [[nodiscard]] static bool IsSupported(const Device& device);
     [[nodiscard]] bool Failed() const noexcept;
     [[nodiscard]] VkExtent2D OutputExtent() const noexcept;
-    /// False while pipelines initialize or if this frame's input is outside XeSS's supported range.
+    /// True means XeSS evaluation was queued, not completed. Deferred consumers must retain and
+    /// check execution_failed because the worker may fail after this call returns.
     bool Upscale(const Inputs& inputs);
     [[nodiscard]] VkImage OutputImage() const noexcept;
     [[nodiscard]] VkImageView OutputView() const noexcept;

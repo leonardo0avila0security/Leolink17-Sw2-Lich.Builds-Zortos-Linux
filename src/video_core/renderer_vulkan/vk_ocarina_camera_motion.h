@@ -41,6 +41,8 @@ public:
     ~OcarinaUpscaler();
 
     [[nodiscard]] bool EvaluationFailed() const;
+    [[nodiscard]] bool EvaluationFailedThisFrame() const;
+    [[nodiscard]] bool EvaluationSucceededThisFrame() const;
     [[nodiscard]] std::shared_ptr<std::atomic<bool>> EvaluationFailureFlag() const;
     [[nodiscard]] VkExtent2D XessOutputExtent() const;
     [[nodiscard]] bool UsedXeSS() const;
@@ -60,7 +62,8 @@ public:
     /// Queue motion, temporal evaluation and guest writeback for one frame. A false return leaves
     /// the guest dispatch in charge. The scheduler checks EvaluationFailed before skipping it.
     bool Record(VkImageView color, VkImageView depth, VkImageView target, VkExtent2D extent,
-                VkExtent2D output_extent, VkExtent2D target_extent, const std::array<f32, 16>& current,
+                VkExtent2D output_extent, VkExtent2D fsr_output_extent, bool xess_eligible,
+                VkExtent2D target_extent, const std::array<f32, 16>& current,
                 const std::array<f32, 16>& previous, const OcarinaActorMesh& mesh,
                 VkImage depth_image, u64 frame, std::array<f32, 2> jitter = {},
                 VkExtent2D depth_extent = {});

@@ -177,7 +177,7 @@ u32 RequiredInstanceApiVersion() {
 std::vector<std::string> InstanceExtensions() {
 #ifdef _WIN32
     if (!Start()) {
-        return std::nullopt;
+        return {};
     }
     return GetState().instance_extensions;
 #else
@@ -189,7 +189,7 @@ std::optional<std::vector<std::string>> DeviceExtensions(VkInstance instance,
                                                          VkPhysicalDevice physical) {
 #ifdef _WIN32
     if (!Start()) {
-        return {};
+        return std::nullopt;
     }
     uint32_t count{};
     const char* const* names{};
