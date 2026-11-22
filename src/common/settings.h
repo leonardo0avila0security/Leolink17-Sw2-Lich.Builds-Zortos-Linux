@@ -1214,6 +1214,7 @@ struct OcarinaResolution {
 };
 
 OcarinaResolution OcarinaRenderInputResolution();
+OcarinaResolution OcarinaCustomRenderInputResolution(u32 width);
 OcarinaResolution OcarinaUpscaleOutputResolution(u32 window_width, u32 window_height);
 
 constexpr u32 MIN_FRAME_GEN_MULTIPLIER = 2;

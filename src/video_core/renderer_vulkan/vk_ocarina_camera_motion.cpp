@@ -1093,7 +1093,7 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
     state.queue.AddImage(*resources.color_view);
     state.color_pass.Record(state.scheduler, state.queue.UpdateData(), *resources.color, extent);
     bool xess_color_ready = false;
-    if (state.xess_color_pass && state.xess && !state.xess->Failed()) {
+    if (xess_eligible && state.xess_color_pass && state.xess && !state.xess->Failed()) {
         try {
             if (!resources.xess_color || !resources.xess_color_view) {
                 resources.xess_color_view = {};
@@ -1178,7 +1178,7 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
             .depth_size = depth_extent,
             .output_size = output_extent,
             .jitter = jitter,
-            .reset = reset,
+            .reset = reset || !state.output_xess,
             .execution_failed = resources.xess_execution_failed,
             .execution_succeeded = resources.xess_execution_succeeded,
         });

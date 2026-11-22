@@ -443,9 +443,6 @@ struct XessUpscaler::Impl {
     bool Execute(const Inputs& inputs) {
         const XeSS::Api* const api = XeSS::GetApi();
         if (!api || !context || failed.load(std::memory_order_acquire)) {
-            if (inputs.execution_failed) {
-                inputs.execution_failed->store(true, std::memory_order_release);
-            }
             return false;
         }
         const bool reset_history =

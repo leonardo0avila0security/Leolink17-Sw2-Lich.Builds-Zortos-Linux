@@ -3381,7 +3381,9 @@ void RasterizerVulkan::PlayUnlentDispatch(UnlentDispatch& dispatch) {
     // Until a dispatch overwrites the scene, each direct one binds only after the effects are
     // marked.
     const bool marking_effects = direct && oot_effects_frame == render_trace_frame &&
-        OcarinaTemporalEnabled() && oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr;
+        OcarinaTemporalEnabled() &&
+        (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+         oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess);
     ComputePipeline::BindCommand deferred_bind;
     bool configured;
     {
@@ -3497,7 +3499,8 @@ void RasterizerVulkan::DispatchCompute() {
     // marked. The indirect path records its bind at once.
     const bool marking_effects = oot_effects_frame == render_trace_frame &&
                                  OcarinaTemporalEnabled() &&
-                                 oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr &&
+                                 (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+                                  oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess) &&
                                  !indirect_address && !list_slot && !frame_dump.Capturing();
     ComputePipeline::BindCommand deferred_bind;
     switch (pipeline->Configure(*kepler_compute, *gpu_memory, scheduler, buffer_cache,

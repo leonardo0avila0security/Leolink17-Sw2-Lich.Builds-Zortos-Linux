@@ -494,7 +494,8 @@ void Device::RemoveExtension(bool& extension, const std::string& extension_name)
 }
 
 void Device::RemoveExtensionIfUnsuitable(bool is_suitable, const std::string& extension_name) {
-    if (loaded_extensions.contains(extension_name) && !is_suitable) {
+    if (loaded_extensions.contains(extension_name) && !is_suitable &&
+        !(xess_supported && xess_required_extensions.contains(extension_name))) {
         LOG_WARNING(Render_Vulkan, "Removing unsuitable extension {}", extension_name);
         this->RemoveExtension(is_suitable, extension_name);
     }
@@ -519,7 +520,8 @@ void Device::RemoveExtensionFeature(bool& extension, Feature& feature,
 template <typename Feature>
 void Device::RemoveExtensionFeatureIfUnsuitable(bool is_suitable, Feature& feature,
                                                 const std::string& extension_name) {
-    if (loaded_extensions.contains(extension_name) && !is_suitable) {
+    if (loaded_extensions.contains(extension_name) && !is_suitable &&
+        !(xess_supported && xess_required_extensions.contains(extension_name))) {
         LOG_WARNING(Render_Vulkan, "Removing features for unsuitable extension {}", extension_name);
         this->RemoveExtensionFeature(is_suitable, feature, extension_name);
     }
@@ -1793,6 +1795,8 @@ bool Device::GetSuitability(bool requires_swapchain) {
                                                &feature_chain)) {
             xess_features_chain_head = feature_chain;
             loaded_extensions.insert(xess_device_extensions.begin(), xess_device_extensions.end());
+            xess_required_extensions.insert(xess_device_extensions.begin(),
+                                            xess_device_extensions.end());
             xess_supported = true;
             LOG_INFO(Render_Vulkan, "XeSS-SR Vulkan requirements enabled on {}",
                      properties.properties.deviceName);
@@ -2406,11 +2410,14 @@ void Device::RemoveUnsuitableExtensions() {
                                VK_EXT_SHADER_FLOAT8_EXTENSION_NAME);
     }
 
-    // Only for the fsr4-vk port: integer dot products and compute derivatives for its INT8
-    // network, and VK_NV_cooperative_matrix2's matrix conversions (all RADV implements of it,
-    // behind its radv_cooperative_matrix2_nv option) for its FP8 network.
+    // The FSR4 port needs integer dot products and compute derivatives for its INT8 network, and
+    // VK_NV_cooperative_matrix2's matrix conversions for its FP8 network. Preserve integer dot
+    // products when XeSS explicitly requests them too.
     const bool fsr4_port = WantsFsr4Port(properties.driver.driverID);
-    if (extensions.shader_integer_dot_product &&
+    const bool xess_requires_integer_dot_product =
+        xess_supported &&
+        xess_required_extensions.contains(VK_KHR_SHADER_INTEGER_DOT_PRODUCT_EXTENSION_NAME);
+    if (extensions.shader_integer_dot_product && !xess_requires_integer_dot_product &&
         (!fsr4_port || !features.shader_integer_dot_product.shaderIntegerDotProduct)) {
         RemoveExtensionFeature(extensions.shader_integer_dot_product,
                                features.shader_integer_dot_product,

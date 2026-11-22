@@ -495,7 +495,7 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
     const auto update_ocarina_details = [this, hold_graphics, ocarina_custom_input_widgets,
                                          ocarina_custom_output_widgets,
                                          ocarina_xess_checkbox, xess_quality_widget,
-                                         custom_input_width, custom_input_height,
+                                         custom_input_width,
                                          custom_output_width, custom_output_height,
                                          ocarina_render_scale_combobox, nvidia_dlss_checkbox,
                                          nvidia_dlss_quality_combobox]() {
@@ -523,10 +523,12 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             case Settings::OcarinaRenderScale::Scale50: input = {1280, 720}; break;
             case Settings::OcarinaRenderScale::Scale375: input = {960, 540}; break;
             case Settings::OcarinaRenderScale::ScaleCustom:
-                input = {static_cast<u32>(custom_input_width->value()),
-                         static_cast<u32>(custom_input_height->value())};
+                input = Settings::OcarinaCustomRenderInputResolution(
+                    static_cast<u32>(custom_input_width->value()));
                 break;
             case Settings::OcarinaRenderScale::Scale100:
+                input = {2560, 1440};
+                break;
             case Settings::OcarinaRenderScale::Automatic:
             default:
                 input = {2560, 1440};

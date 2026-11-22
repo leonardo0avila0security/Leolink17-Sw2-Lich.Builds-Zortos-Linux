@@ -1552,6 +1552,7 @@ private:
     // Telemetry parameters
     std::set<std::string, std::less<>> supported_extensions; ///< Reported Vulkan extensions.
     std::set<std::string, std::less<>> loaded_extensions;    ///< Loaded Vulkan extensions.
+    std::set<std::string, std::less<>> xess_required_extensions;
     bool streamline_extensions{}; ///< NVIDIA DLSS's extensions are loaded.
     bool streamline_attached{};   ///< Streamline has this device.
     std::vector<size_t> valid_heap_memory;                   ///< Heaps used.
