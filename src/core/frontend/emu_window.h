@@ -7,6 +7,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <utility>
 
 #include "common/common_types.h"
@@ -118,7 +119,8 @@ public:
      * Gets the framebuffer layout (width, height, and screen regions)
      * @note This method is thread-safe
      */
-    const Layout::FramebufferLayout& GetFramebufferLayout() const {
+    Layout::FramebufferLayout GetFramebufferLayout() const {
+        std::scoped_lock lock{framebuffer_layout_mutex};
         return framebuffer_layout;
     }
 
@@ -154,6 +156,7 @@ protected:
      * @note EmuWindow implementations will usually use this in window resize event handlers.
      */
     void NotifyFramebufferLayoutChanged(const Layout::FramebufferLayout& layout) {
+        std::scoped_lock lock{framebuffer_layout_mutex};
         framebuffer_layout = layout;
     }
 
@@ -190,6 +193,7 @@ private:
         // By default, ignore this request and do nothing.
     }
 
+    mutable std::mutex framebuffer_layout_mutex;
     Layout::FramebufferLayout framebuffer_layout; ///< Current framebuffer layout
 
     u32 client_area_width;  ///< Current client width, should be set by window impl.

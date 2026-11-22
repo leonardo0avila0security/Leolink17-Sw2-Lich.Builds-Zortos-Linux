@@ -875,6 +875,26 @@ bool OcarinaUpscaler::EvaluationFailed() const {
     return impl->Failed();
 }
 
+std::shared_ptr<std::atomic<bool>> OcarinaUpscaler::EvaluationFailureFlag() const {
+    if (!impl->last_frame) {
+        return {};
+    }
+    for (const auto& slot : impl->slots) {
+        if (slot && slot->frame == *impl->last_frame && slot->xess_execution_failed) {
+            return slot->xess_execution_failed;
+        }
+    }
+    return {};
+}
+
+VkExtent2D OcarinaUpscaler::XessOutputExtent() const {
+    return impl->xess ? impl->xess->OutputExtent() : VkExtent2D{};
+}
+
+bool OcarinaUpscaler::UsedXeSS() const {
+    return impl->output_xess;
+}
+
 void OcarinaUpscaler::SaveSceneReference(VkImageView color) {
     auto& state = *impl;
     constexpr VkExtent2D extent{2560, 1440};
@@ -1051,7 +1071,7 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
     state.queue.AddSampledImage(color, sampler);
     state.queue.AddImage(*resources.color_view);
     state.color_pass.Record(state.scheduler, state.queue.UpdateData(), *resources.color, extent);
-    if (state.xess_color_pass) {
+    if (state.xess_color_pass && state.xess && !state.xess->Failed()) {
         if (!resources.xess_color) {
             resources.xess_color = CreateOcarinaImage(
                 state.allocator, extent, LIVE_COLOR_FORMAT,
@@ -1224,7 +1244,7 @@ VideoCommon::OcarinaUpscaleBackend ResolveOcarinaUpscaler(const Device& device) 
     case Settings::OcarinaUpscaler::Off:
         return VideoCommon::OcarinaUpscaleBackend::Native;
     case Settings::OcarinaUpscaler::Xess:
-        if (XessUpscaler::IsSupported(device)) {
+        if (XessUpscaler::IsSupported(device) && Fsr3Upscaler::IsSupported(device)) {
             return VideoCommon::OcarinaUpscaleBackend::Xess;
         }
         return Fsr3Upscaler::IsSupported(device)

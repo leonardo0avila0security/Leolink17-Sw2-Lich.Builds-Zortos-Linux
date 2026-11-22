@@ -96,6 +96,22 @@ xess_quality_settings_t ToXeSSRatioQuality(VkExtent2D input, VkExtent2D output) 
     return closest->quality;
 }
 
+xess_quality_settings_t ToXeSSQuality(Settings::XessQuality quality) {
+    switch (quality) {
+    case Settings::XessQuality::UltraQuality:
+        return XESS_QUALITY_SETTING_ULTRA_QUALITY;
+    case Settings::XessQuality::Quality:
+        return XESS_QUALITY_SETTING_QUALITY;
+    case Settings::XessQuality::Balanced:
+        return XESS_QUALITY_SETTING_BALANCED;
+    case Settings::XessQuality::Performance:
+        return XESS_QUALITY_SETTING_PERFORMANCE;
+    case Settings::XessQuality::UltraPerformance:
+        return XESS_QUALITY_SETTING_ULTRA_PERFORMANCE;
+    }
+    return XESS_QUALITY_SETTING_ULTRA_QUALITY;
+}
+
 VkExtent2D ScaleExtentAtQualityRatio(VkExtent2D input, double scale) {
     if (input.width == 0 || input.height == 0 || !std::isfinite(scale) || scale < 1.0) {
         return {};
@@ -282,12 +298,13 @@ struct XessUpscaler::Impl {
             return;
         }
         api->set_logging_callback(context, XESS_LOGGING_LEVEL_WARNING, LogXeSS);
-        const xess_quality_settings_t sdk_quality =
-            aa ? XESS_QUALITY_SETTING_AA : ToXeSSRatioQuality(input_size, output_extent);
+        xess_quality_settings_t sdk_quality =
+            aa ? XESS_QUALITY_SETTING_AA : ToXeSSQuality(quality);
         VkExtent2D xess_extent = output_extent;
-        if (aa) {
-            xess_extent = input_size;
-        } else if (use_intermediate) {
+        const auto update_intermediate_extent = [&] {
+            if (!use_intermediate || aa) {
+                return true;
+            }
             const xess_2d_t window_resolution{output_extent.width, output_extent.height};
             xess_2d_t window_optimal{};
             xess_2d_t ignored_minimum{};
@@ -296,26 +313,47 @@ struct XessUpscaler::Impl {
                                                   &window_optimal, &ignored_minimum,
                                                   &ignored_maximum) != XESS_RESULT_SUCCESS ||
                 window_optimal.x == 0 || window_optimal.y == 0) {
-                Fail("could not determine the selected quality mode's scale ratio");
-                return;
+                return false;
             }
             const double scale =
                 (static_cast<double>(output_extent.width) / window_optimal.x +
                  static_cast<double>(output_extent.height) / window_optimal.y) * 0.5;
             xess_extent = ScaleExtentAtQualityRatio(input_size, scale);
-            if (xess_extent.width == 0 || xess_extent.height == 0) {
-                Fail("could not create an aspect-matched XeSS output extent");
-                return;
-            }
+            return xess_extent.width != 0 && xess_extent.height != 0;
+        };
+        if (aa) {
+            xess_extent = input_size;
+        } else if (!update_intermediate_extent()) {
+            Fail("could not determine the selected quality mode's scale ratio");
+            return;
         }
-        const xess_2d_t output_resolution{xess_extent.width, xess_extent.height};
         xess_2d_t optimal{};
         xess_2d_t minimum{};
         xess_2d_t maximum{};
-        if (api->get_optimal_input_resolution(context, &output_resolution, sdk_quality, &optimal,
-                                              &minimum, &maximum) != XESS_RESULT_SUCCESS) {
+        const auto query_input_range = [&] {
+            const xess_2d_t output_resolution{xess_extent.width, xess_extent.height};
+            return api->get_optimal_input_resolution(context, &output_resolution, sdk_quality,
+                                                      &optimal, &minimum, &maximum) ==
+                   XESS_RESULT_SUCCESS;
+        };
+        if (!query_input_range()) {
             Fail("could not determine the selected quality mode's input range");
             return;
+        }
+        const auto input_fits = [&] {
+            return input_size.width >= minimum.x && input_size.height >= minimum.y &&
+                   input_size.width <= maximum.x && input_size.height <= maximum.y;
+        };
+        if (!aa && !input_fits()) {
+            sdk_quality = ToXeSSRatioQuality(input_size, output_extent);
+            if (use_intermediate && !update_intermediate_extent()) {
+                Fail("could not determine the ratio fallback's scale");
+                return;
+            }
+            if (!query_input_range()) {
+                Fail("could not determine the ratio fallback's input range");
+                return;
+            }
         }
         optimal_input = optimal;
         minimum_input = minimum;
@@ -399,10 +437,10 @@ struct XessUpscaler::Impl {
              static_cast<u32>(sdk_quality));
     }
 
-    void Execute(const Inputs& inputs) {
+    bool Execute(const Inputs& inputs) {
         const XeSS::Api* const api = XeSS::GetApi();
         if (!api || !context || failed.load(std::memory_order_acquire)) {
-            return;
+            return false;
         }
         const bool reset_history =
             history_reset_pending.exchange(false, std::memory_order_acq_rel);
@@ -426,7 +464,7 @@ struct XessUpscaler::Impl {
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
             Barrier(target_image, COLOR_RANGE,
                     target_initialized ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT : 0,
-                    VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
                     target_initialized ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
                     VK_IMAGE_LAYOUT_GENERAL),
         };
@@ -488,7 +526,8 @@ struct XessUpscaler::Impl {
                                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, {}, {}, input_back);
             if (!intermediate_output) {
                 const VkImageMemoryBarrier output_back = Barrier(
-                    target_image, COLOR_RANGE, VK_ACCESS_SHADER_WRITE_BIT,
+                    target_image, COLOR_RANGE,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
                     VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
                 cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, {}, {}, output_back);
@@ -528,7 +567,8 @@ struct XessUpscaler::Impl {
             }
             const std::array<VkImageMemoryBarrier, 2> after_blit{
                 Barrier(target_image, COLOR_RANGE, VK_ACCESS_TRANSFER_READ_BIT,
-                        VK_ACCESS_SHADER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                         VK_IMAGE_LAYOUT_GENERAL),
                 Barrier(*output_image, COLOR_RANGE, VK_ACCESS_TRANSFER_WRITE_BIT,
                         VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
@@ -537,6 +577,7 @@ struct XessUpscaler::Impl {
             cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
                                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, {}, {}, after_blit);
         });
+        return true;
     }
 
     bool SupportsInput(VkExtent2D input_size) const {
@@ -572,7 +613,7 @@ struct XessUpscaler::Impl {
     }
 #else
     void Initialize(VkExtent2D, VkExtent2D) {}
-    void Execute(const Inputs&) {}
+    bool Execute(const Inputs&) { return false; }
     void Fail(std::string_view) {
         failed.store(true, std::memory_order_release);
     }
@@ -635,6 +676,14 @@ bool XessUpscaler::IsSupported(const Device& device) {
 
 bool XessUpscaler::Failed() const noexcept {
     return impl->failed.load(std::memory_order_acquire);
+}
+
+VkExtent2D XessUpscaler::OutputExtent() const noexcept {
+#ifdef _WIN32
+    return impl->xess_output_size;
+#else
+    return {};
+#endif
 }
 
 bool XessUpscaler::Upscale(const Inputs& inputs) {
@@ -701,8 +750,7 @@ bool XessUpscaler::Upscale(const Inputs& inputs) {
         }
         return false;
     }
-    state.Execute(inputs);
-    return true;
+    return state.Execute(inputs);
 #else
     (void)inputs;
     return false;

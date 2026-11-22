@@ -1527,6 +1527,8 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
 #ifdef EGLANTINE_STREAMLINE
             const bool wanted =
                 max_resolution_applied &&
+                Settings::values.ocarina_render_input.GetValue() ==
+                    Settings::OcarinaRenderInput::Legacy &&
                 Settings::values.ocarina_render_scale.GetValue() ==
                     Settings::OcarinaRenderScale::Automatic &&
                 Settings::OcarinaDlssRenderScale() == patch.dlss_quality &&

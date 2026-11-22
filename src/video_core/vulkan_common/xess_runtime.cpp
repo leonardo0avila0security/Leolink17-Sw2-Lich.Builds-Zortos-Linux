@@ -177,7 +177,7 @@ u32 RequiredInstanceApiVersion() {
 std::vector<std::string> InstanceExtensions() {
 #ifdef _WIN32
     if (!Start()) {
-        return {};
+        return std::nullopt;
     }
     return GetState().instance_extensions;
 #else
@@ -185,7 +185,8 @@ std::vector<std::string> InstanceExtensions() {
 #endif
 }
 
-std::vector<std::string> DeviceExtensions(VkInstance instance, VkPhysicalDevice physical) {
+std::optional<std::vector<std::string>> DeviceExtensions(VkInstance instance,
+                                                         VkPhysicalDevice physical) {
 #ifdef _WIN32
     if (!Start()) {
         return {};
@@ -196,8 +197,7 @@ std::vector<std::string> DeviceExtensions(VkInstance instance, VkPhysicalDevice 
                                                                       &names);
     if (result != XESS_RESULT_SUCCESS || (count != 0 && names == nullptr)) {
         LOG_WARNING(Render_Vulkan, "XeSS runtime could not report its Vulkan device requirements");
-        Disable("the runtime could not report its device requirements");
-        return {};
+        return std::nullopt;
     }
     std::vector<std::string> extensions;
     extensions.reserve(count);
@@ -206,7 +206,7 @@ std::vector<std::string> DeviceExtensions(VkInstance instance, VkPhysicalDevice 
     }
     return extensions;
 #else
-    return {};
+    return std::vector<std::string>{};
 #endif
 }
 

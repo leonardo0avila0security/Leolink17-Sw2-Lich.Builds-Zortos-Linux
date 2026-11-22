@@ -41,6 +41,7 @@ public:
 
     [[nodiscard]] static bool IsSupported(const Device& device);
     [[nodiscard]] bool Failed() const noexcept;
+    [[nodiscard]] VkExtent2D OutputExtent() const noexcept;
     /// False while pipelines initialize or if this frame's input is outside XeSS's supported range.
     bool Upscale(const Inputs& inputs);
     [[nodiscard]] VkImage OutputImage() const noexcept;

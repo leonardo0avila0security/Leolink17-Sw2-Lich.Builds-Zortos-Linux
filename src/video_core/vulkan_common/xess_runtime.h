@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,8 +45,8 @@ struct Api {
 [[nodiscard]] bool IsAvailable();
 [[nodiscard]] u32 RequiredInstanceApiVersion();
 [[nodiscard]] std::vector<std::string> InstanceExtensions();
-[[nodiscard]] std::vector<std::string> DeviceExtensions(VkInstance instance,
-                                                         VkPhysicalDevice physical);
+[[nodiscard]] std::optional<std::vector<std::string>> DeviceExtensions(
+    VkInstance instance, VkPhysicalDevice physical);
 [[nodiscard]] bool EnableRequiredDeviceFeatures(VkInstance instance, VkPhysicalDevice physical,
                                                void** features);
 void Disable(std::string_view reason);

@@ -1537,14 +1537,19 @@ bool Device::GetSuitability(bool requires_swapchain) {
     std::vector<std::string> xess_device_extensions;
     bool xess_requirements_available = XeSS::IsAvailable();
     if (xess_requirements_available) {
-        xess_device_extensions =
+        auto required_extensions =
             XeSS::DeviceExtensions(instance, static_cast<VkPhysicalDevice>(physical));
+        if (!required_extensions) {
+            xess_requirements_available = false;
+        } else {
+            xess_device_extensions = std::move(*required_extensions);
+        }
         const auto supported = [&](const std::string& name) {
             return supported_extensions.contains(name);
         };
-        if (!std::ranges::all_of(xess_device_extensions, supported)) {
+        if (xess_requirements_available &&
+            !std::ranges::all_of(xess_device_extensions, supported)) {
             xess_requirements_available = false;
-            XeSS::Disable("the selected Vulkan device lacks a required device extension");
         }
     }
 
@@ -1793,7 +1798,6 @@ bool Device::GetSuitability(bool requires_swapchain) {
                      properties.properties.deviceName);
         } else {
             xess_requirements_available = false;
-            XeSS::Disable("the selected Vulkan device lacks required features");
         }
     }
 

@@ -1397,6 +1397,12 @@ TEST_CASE("Built-in Ocarina render scale follows its setting", "[patch_manager]"
 
     Settings::values.ocarina_render_scale.SetValue(Scale::Automatic);
     Settings::values.nvidia_dlss_quality.SetValue(Quality::Performance);
+    Settings::values.nvidia_dlss.SetValue(true);
+    Settings::values.use_docked_mode.SetValue(Settings::ConsoleMode::Docked);
+    Settings::values.ocarina_render_input.SetValue(Settings::OcarinaRenderInput::P720);
+    CHECK(scale() == 0x52A7E009);
+    CHECK(Settings::AppliedOcarinaRenderScale() == Scale::Scale50);
+    Settings::values.ocarina_render_input.SetValue(Settings::OcarinaRenderInput::Legacy);
     Settings::values.use_docked_mode.SetValue(Settings::ConsoleMode::Handheld);
     CHECK(scale() == ScaleOne);
     Settings::values.use_docked_mode.SetValue(Settings::ConsoleMode::Docked);
@@ -1409,6 +1415,7 @@ TEST_CASE("Built-in Ocarina render scale follows its setting", "[patch_manager]"
     CHECK(scale() == 0x52A7D809);
     Settings::values.ocarina_render_input.SetValue(Settings::OcarinaRenderInput::P720);
     CHECK(scale() == 0x52A7E009);
+    CHECK(Settings::AppliedOcarinaRenderScale() == Scale::Scale50);
     Settings::values.ocarina_render_input.SetValue(Settings::OcarinaRenderInput::P900);
     CHECK(scale() == 0x52A7E409);
     Settings::values.ocarina_render_input.SetValue(Settings::OcarinaRenderInput::P1080);
@@ -1419,6 +1426,9 @@ TEST_CASE("Built-in Ocarina render scale follows its setting", "[patch_manager]"
     Settings::values.ocarina_custom_input_width.SetValue(960);
     Settings::values.ocarina_custom_input_height.SetValue(540);
     CHECK(scale() == 0x52A7D809);
+    const auto custom_input = Settings::OcarinaRenderInputResolution();
+    CHECK(custom_input.width == 960);
+    CHECK(custom_input.height == 540);
 
     Settings::values.ocarina_render_input.SetValue(Settings::OcarinaRenderInput::Legacy);
     Settings::values.disabled_addons[OcarinaTitleId] = {std::string{MaxResolution}};

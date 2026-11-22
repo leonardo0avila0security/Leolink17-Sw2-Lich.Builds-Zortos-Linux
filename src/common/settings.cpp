@@ -141,9 +141,14 @@ OcarinaResolution OcarinaRenderInputResolution() {
         return {1920, 1080};
     case OcarinaRenderInput::P1440:
         return {2560, 1440};
-    case OcarinaRenderInput::Custom:
-        return {std::clamp(values.ocarina_custom_input_width.GetValue(), 640U, 3840U),
-                std::clamp(values.ocarina_custom_input_height.GetValue(), 360U, 2160U)};
+    case OcarinaRenderInput::Custom: {
+        const u32 width = std::clamp(values.ocarina_custom_input_width.GetValue(), 640U, 3840U);
+        const f32 scale = std::clamp(static_cast<f32>(width) / 2560.0f, 0.25f, 1.0f);
+        const u32 effective_scale_bits = (std::bit_cast<u32>(scale) >> 16) << 16;
+        const f32 effective_scale = std::bit_cast<f32>(effective_scale_bits);
+        return {static_cast<u32>(std::lround(2560.0f * effective_scale)),
+                static_cast<u32>(std::lround(1440.0f * effective_scale))};
+    }
     case OcarinaRenderInput::Legacy:
     default:
         switch (AppliedOcarinaRenderScale().value_or(OcarinaRenderScale::Scale100)) {

@@ -617,8 +617,6 @@ RasterizerVulkan::RasterizerVulkan(Core::Frontend::EmuWindow& emu_window_, Tegra
         device.GetDriverID() != VK_DRIVER_ID_AMD_PROPRIETARY && !device.IsMoltenVK() &&
         device.IsHostQueryResetSupported());
     VideoCommon::GpuSplit::Get().WatchRenderLocks({&buffer_cache.mutex, &texture_cache.mutex});
-    oot_performance_scale =
-        Settings::AppliedOcarinaRenderScale() == Settings::NvidiaDlssQuality::Performance;
 }
 
 RasterizerVulkan::~RasterizerVulkan() {
@@ -3662,12 +3660,16 @@ void RasterizerVulkan::DispatchCompute() {
     if (!replacement) {
         scheduler.TraceComputePipeline(pipeline->ShaderHash());
     }
+    const auto replacement_failure =
+        replacement ? replacement->EvaluationFailureFlag() : nullptr;
     scheduler.Record([this, pipeline, dim, byte_addressed_shadow, bind = std::move(deferred_bind),
-                      replacement, barrier_recorded](vk::CommandBuffer cmdbuf) {
+                      replacement, replacement_failure, barrier_recorded](vk::CommandBuffer cmdbuf) {
         if (!barrier_recorded) {
             RecordDispatchBarrier(cmdbuf);
         }
-        if (replacement && !replacement->EvaluationFailed()) {
+        if (replacement && !replacement->EvaluationFailed() &&
+                        !(replacement_failure &&
+                            replacement_failure->load(std::memory_order_acquire))) {
             return;
         }
         if (replacement) {
@@ -5154,11 +5156,8 @@ void RasterizerVulkan::ApplyOcarinaCamera(const ImageView& color, const OcarinaC
         refuse("no scene camera: its buffer is GPU-written", 0.0f, 0.0f);
         return;
     }
-    VideoCommon::OcarinaCameraBuffer values;
-    device_memory.ReadBlockUnsafe(*device_address, values.data(), sizeof(values));
     const bool allow_padding = oot_backend == VideoCommon::OcarinaUpscaleBackend::Dlss ||
                                oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr;
-    const VideoCommon::OcarinaCameraBuffer& values = *facts.camera;
     const auto& values = facts.values;
     const auto camera = VideoCommon::DecodeOcarinaCamera(
         values, color.size.width, color.size.height, allow_padding);
@@ -5204,13 +5203,11 @@ void RasterizerVulkan::UpdateOcarinaJitter() {
     // the scene size, so a depth pre-pass and the colour passes move together; shadow maps,
     // half-size passes and full-screen passes (which keep the depth bound without using it, as
     // #678 found, some with depth writes on: with the test off nothing writes depth) stay put.
-    const auto& regs = maxwell3d->regs;
+    const auto& regs = DrawEngine().regs;
     if ((oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
          oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess) &&
-        oot_motion.extent.width != 0 &&
-    const auto& regs = DrawEngine().regs;
-    if (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr && oot_motion.extent.width != 0 &&
-        oot_dlss_frame && *oot_dlss_frame + 1 >= render_trace_frame && regs.depth_test_enable) {
+        oot_motion.extent.width != 0 && oot_dlss_frame &&
+        *oot_dlss_frame + 1 >= render_trace_frame && regs.depth_test_enable) {
         const auto& targets = texture_cache.GetRenderTargets();
         if (targets.depth_buffer_id) {
             const auto& depth = texture_cache.GetImageView(targets.depth_buffer_id);
@@ -5485,7 +5482,8 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
                             (pass == OneToOne || pass == Scaled || three_quarter_1440p);
     // Handheld with the Max Resolution add-on: FSR runs as native AA. DLAA through it is untested.
     const bool native_size = pass == OneToOne && !target_1440p;
-    if (native_size && oot_backend != VideoCommon::OcarinaUpscaleBackend::Fsr) {
+    if (native_size && oot_backend != VideoCommon::OcarinaUpscaleBackend::Fsr &&
+        oot_backend != VideoCommon::OcarinaUpscaleBackend::Xess) {
         return fail("the full-size pass is replaced only by FSR");
     }
     const bool upscale_4k = pass_1440p && !native_resolution;
@@ -5535,7 +5533,8 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
                 staging_pool, *oot_backend);
         }
         const VkExtent2D target_extent{target.size.width, target.size.height};
-        const auto& screen = emu_window.GetFramebufferLayout().screen;
+        const auto framebuffer_layout = emu_window.GetFramebufferLayout();
+        const auto& screen = framebuffer_layout.screen;
         const VkExtent2D window_extent{screen.GetWidth(), screen.GetHeight()};
         const bool new_output_setting =
             Settings::values.ocarina_upscale_output.GetValue() !=
@@ -5603,8 +5602,11 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
             oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess ? "XeSS"
             : oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ? "FSR 3.1"
                                                                      : "Off";
-        const f32 log_ratio = static_cast<f32>(output_extent.width) /
-                          static_cast<f32>(std::max(extent.width, 1U));
+        const VkExtent2D xess_output = oot_live_dlss->XessOutputExtent();
+        const bool used_xess = oot_live_dlss->UsedXeSS();
+        const f32 log_ratio = static_cast<f32>(
+            used_xess && xess_output.width != 0 ? xess_output.width : output_extent.width) /
+            static_cast<f32>(std::max(extent.width, 1U));
         static u64 logged_contract_frame{};
         if (logged_contract_frame != render_trace_frame) {
             logged_contract_frame = render_trace_frame;

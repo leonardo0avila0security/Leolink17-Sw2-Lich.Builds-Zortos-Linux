@@ -19,23 +19,28 @@ EmuWindow::EmuWindow() {
 EmuWindow::~EmuWindow() {}
 
 std::pair<f32, f32> EmuWindow::MapToTouchScreen(u32 framebuffer_x, u32 framebuffer_y) const {
-    std::tie(framebuffer_x, framebuffer_y) = ClipToTouchScreen(framebuffer_x, framebuffer_y);
+    const auto layout = GetFramebufferLayout();
+    framebuffer_x = (std::max)(framebuffer_x, layout.screen.left);
+    framebuffer_x = (std::min)(framebuffer_x, layout.screen.right - 1);
+    framebuffer_y = (std::max)(framebuffer_y, layout.screen.top);
+    framebuffer_y = (std::min)(framebuffer_y, layout.screen.bottom - 1);
     const float x =
-        static_cast<float>(framebuffer_x - framebuffer_layout.screen.left) /
-        static_cast<float>(framebuffer_layout.screen.right - framebuffer_layout.screen.left);
+        static_cast<float>(framebuffer_x - layout.screen.left) /
+        static_cast<float>(layout.screen.right - layout.screen.left);
     const float y =
-        static_cast<float>(framebuffer_y - framebuffer_layout.screen.top) /
-        static_cast<float>(framebuffer_layout.screen.bottom - framebuffer_layout.screen.top);
+        static_cast<float>(framebuffer_y - layout.screen.top) /
+        static_cast<float>(layout.screen.bottom - layout.screen.top);
 
     return std::make_pair(x, y);
 }
 
 std::pair<u32, u32> EmuWindow::ClipToTouchScreen(u32 new_x, u32 new_y) const {
-    new_x = (std::max)(new_x, framebuffer_layout.screen.left);
-    new_x = (std::min)(new_x, framebuffer_layout.screen.right - 1);
+    const auto layout = GetFramebufferLayout();
+    new_x = (std::max)(new_x, layout.screen.left);
+    new_x = (std::min)(new_x, layout.screen.right - 1);
 
-    new_y = (std::max)(new_y, framebuffer_layout.screen.top);
-    new_y = (std::min)(new_y, framebuffer_layout.screen.bottom - 1);
+    new_y = (std::max)(new_y, layout.screen.top);
+    new_y = (std::min)(new_y, layout.screen.bottom - 1);
 
     return std::make_pair(new_x, new_y);
 }
