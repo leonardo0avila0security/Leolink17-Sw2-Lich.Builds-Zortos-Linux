@@ -533,6 +533,8 @@ void GpuSplit::WaitForSpace(size_t words) {
         }
         if (spins < 4096) {
             Pause();
+        } else if (spins < 65536) {
+            std::this_thread::yield();
         } else {
             SleepForBack(target);
         }
@@ -585,6 +587,8 @@ void GpuSplit::Drain(DrainSite site) {
             }
             if (spins < 16384) {
                 Pause();
+            } else if (spins < 65536) {
+                std::this_thread::yield();
             } else {
                 SleepForBack(write_position, true, on_engine);
             }
@@ -1019,6 +1023,10 @@ bool GpuSplit::Reached(u64 target, bool on_engine, std::memory_order order) cons
 void GpuSplit::Backoff(u32 spins, u64 target, bool on_engine) {
     if (spins < 16384) {
         Pause();
+        return;
+    }
+    if (spins < 65536) {
+        std::this_thread::yield();
         return;
     }
     SleepForBack(target, false, on_engine);
