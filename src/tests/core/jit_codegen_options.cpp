@@ -17,7 +17,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#if defined(__linux__) && defined(__x86_64__)
+#if defined(__linux__) && defined(ARCHITECTURE_x86_64) && !defined(_M_ARM64EC)
 #include <spawn.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -42,7 +42,8 @@ extern char** environ;
 #pragma GCC diagnostic pop
 #endif
 
-#if defined(__x86_64__)
+// Prefer the project's arch macro (covers MSVC _M_X64). Exclude ARM64EC, which also defines _M_X64.
+#if defined(ARCHITECTURE_x86_64) && !defined(_M_ARM64EC)
 namespace {
 
 using namespace Dynarmic;
@@ -283,7 +284,7 @@ TEST_CASE("JIT codegen options: random blocks", "[jit_codegen_options]") {
 }
 #endif
 
-#if defined(__linux__) && defined(__x86_64__)
+#if defined(__linux__) && defined(ARCHITECTURE_x86_64) && !defined(_M_ARM64EC)
 
 namespace {
 
