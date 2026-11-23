@@ -51,6 +51,7 @@
 #include "video_core/texture_cache/sampled_views.h"
 #include "video_core/texture_cache/stale_pages.h"
 #include "video_core/texture_cache/types.h"
+#include "video_core/texture_cache/util.h"
 #include "video_core/texture_cache/writeback_ranges.h"
 #include "video_core/textures/texture.h"
 #include "video_core/textures/unswizzle_worker.h"
@@ -606,6 +607,9 @@ private:
     /// Find or create an image view for the depth buffer
     [[nodiscard]] ImageViewId FindDepthBuffer();
 
+    [[nodiscard]] bool UsePaddedTargetWidths() const;
+    void ClipPaddedTarget(ImageInfo& info) const;
+
     /// Find or create a view for a render target with the given image parameters
     [[nodiscard]] ImageViewId FindRenderTargetView(const ImageInfo& info, GPUVAddr gpu_addr);
 
@@ -893,6 +897,7 @@ private:
     bool is_rescaling = false;
     /// The bound depth target is wider than tall by padding only (see FindDepthBuffer).
     bool depth_target_padded = false;
+    RenderTargetClip render_target_clip;
     u64 total_used_memory = 0;
     u64 minimum_memory;
     u64 expected_memory;
@@ -951,6 +956,21 @@ private:
     };
     std::deque<GpuSentencedImage> gpu_sentenced_images;
     u64 gpu_sentenced_bytes{};
+
+    /// Queued downloads can land before later GPU work using the image completes.
+    struct RetainedImageKeeper {
+        u64 tick;
+        std::shared_ptr<Image> image;
+    };
+    std::deque<RetainedImageKeeper> retained_image_keepers;
+    struct FreeGuardStats {
+        u64 retained_held{};
+        u64 landed_early{};
+        u64 freed_early{};
+        u64 unswizzle_dropped{};
+        u64 logged_total{};
+    };
+    FreeGuardStats free_guard{};
 
     /// Bytes of images per device memory block, for the collector (refreshed every 60 frames).
     std::unordered_map<u64, u64> block_image_bytes;
