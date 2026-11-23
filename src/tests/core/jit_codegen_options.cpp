@@ -213,6 +213,10 @@ bool BranchesIntoBlock(u32 inst, u64 pc, u64 start, u64 end) {
 
 } // namespace
 
+// Codegen options under test are x64-only (see A64::UserConfig). On arm64 the backend also
+// UNREACHABLE()s some encodings the random fuzzer hits (e.g. FPHalfToFixedS64), so gate like
+// the fastmem case below rather than Apple-only.
+#if defined(__x86_64__)
 TEST_CASE("JIT codegen options: random blocks", "[jit_codegen_options]") {
     const std::vector<Encoding> encodings = TestableEncodings();
     std::mt19937_64 rng{150};
@@ -277,6 +281,7 @@ TEST_CASE("JIT codegen options: random blocks", "[jit_codegen_options]") {
         REQUIRE(states[0] == states[1]);
     }
 }
+#endif
 
 #if defined(__linux__) && defined(__x86_64__)
 
