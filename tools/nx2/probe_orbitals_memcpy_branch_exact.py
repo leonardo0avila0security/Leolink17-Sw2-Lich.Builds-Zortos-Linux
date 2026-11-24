@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Reconstruct the exact branch inputs and effective size-field load for dump 16952."""
+"""Reconstruct the live guest branch and the size local for dump 16952.
+
+Important: x29 and x24 are read from the hostfn context snapshot. The saved
+callee-register slots in the AArch64 frame are not substituted for live regs.
+"""
 import struct,sys
 def parse(f):
  f.seek(0,2); fs=f.tell(); f.seek(0)
@@ -42,41 +46,45 @@ def main(path):
   ctx=read(f,rs,ctxp,0x400)
   if not ctx: raise SystemExit("host context not captured")
   pre=q(f,rs,ctxp+0x100); sp=pre-0x120
-  x29=q(f,rs,sp+0xc0); x23=q(f,rs,sp+0xf8); x24=q(f,rs,sp+0xf0)
+  x29=q(f,rs,ctxp+0xe8); x24=q(f,rs,ctxp+0xc0)
+  x23_saved=q(f,rs,sp+0xf8); x24_saved=q(f,rs,sp+0xf0)
   x21=q(f,rs,ctxp+0xa8); x27=q(f,rs,ctxp+0xd8)
+  w12_ctx=u32(f,rs,ctxp+0x60); w12_stack=u32(f,rs,sp+0x4c)
   print(f"dump={fs} context={ctxp:#x} pre_sp={pre:#x} active_sp={sp:#x}")
-  print(f"x21(candidate)={hx(x21)} x27(snapshot)={hx(x27)} x29={hx(x29)} x23(saved)={hx(x23)} x24(saved)={hx(x24)}")
-  w12=u32(f,rs,sp+0x4c); print(f"w12_local_[sp+0x4c]={hx(w12)}")
+  print(f"live_x21={hx(x21)} live_x27={hx(x27)} live_x29={hx(x29)} live_x24={hx(x24)}")
+  print(f"saved_x23={hx(x23_saved)} saved_x24={hx(x24_saved)} w12_ctx={hx(w12_ctx)} w12_stack_local={hx(w12_stack)}")
   p_x29=q(f,rs,x29-8) if x29 else None
-  print(f"[x29-8]={hx(p_x29)}")
-  if x24 is None: raise SystemExit("x24 not captured")
+  print(f"[live_x29-8]={hx(p_x29)}")
   idx=x24
-  a1=(x23+idx*8) if x23 is not None else None
-  a2=(p_x29+idx*8) if p_x29 is not None else None
-  w20raw=u32(f,rs,a1+4) if a1 is not None else None
+  a2=(p_x29+idx*8) if p_x29 is not None and idx is not None else None
   w9raw=u32(f,rs,a2) if a2 is not None else None
-  print(f"loop_x24={idx:#x} x23_pair_addr={hx(a1)} w20_raw={hx(w20raw)} w20_signed={s32(w20raw) if w20raw is not None else None}")
-  print(f"x29_array_addr={hx(a2)} w9_raw={hx(w9raw)} w9_signed={s32(w9raw) if w9raw is not None else None}")
-  if x21 is not None and w20raw is not None:
+  print(f"live_loop_index={hx(idx)} index_addr={hx(a2)} w9_raw={hx(w9raw)} w9_signed={s32(w9raw) if w9raw is not None else None}")
+  if x21 is not None and x27 is not None:
    arr=q(f,rs,x21+0x158); count=u32(f,rs,x21+0x160)
    print(f"table_base={hx(arr)} table_count={hx(count)}")
-   rec=arr+s32(w20raw)*0xe8 if arr is not None else None
-   print(f"selected_record={hx(rec)} expected_x27_snapshot={hx(x27)} record_matches={rec==x27 if rec is not None and x27 is not None else None}")
-   if rec is not None:
-    d0=q(f,rs,rec+0xd0); d8raw=u32(f,rs,rec+0xd8); d8=s32(d8raw) if d8raw is not None else None
-    base=d0 if d0 else rec+0x10
-    eff=(base+(d8<<6)) if d8 is not None else None
-    load=eff-8 if eff is not None else None
-    before_local=q(f,rs,sp+0x88)
-    after=q(f,rs,load) if load is not None else None
-    print(f"record+0xd0={hx(d0)} +0xd8_raw={hx(d8raw)} signed={d8}")
-    print(f"selected_base={hx(base)} x8_effective={hx(eff)} load_addr=[x8-8]={hx(load)}")
-    print(f"captured_qword_at_load(after_store)={hx(after)} saved_d0_local_[sp+0x88]={hx(before_local)}")
-    if load is not None:
-     print("load_neighborhood:")
-     for off in range(-0x20,0x21,8): print(f"  {load+off:#x}: {hx(q(f,rs,load+off))}")
-  print("stack branch locals:")
-  for off in (0x2c,0x30,0x34,0x38,0x4c,0x80,0x88,0xb0):
+   delta=(x27-arr) if arr is not None else None
+   print(f"record_delta={hx(delta)} record_index={(delta//0xe8 if delta is not None and delta%0xe8==0 else 'not-stride-aligned')}")
+   d0=q(f,rs,x27+0xd0); d8raw=u32(f,rs,x27+0xd8); d8=s32(d8raw) if d8raw is not None else None
+   base=d0 if d0 else x27+0x10
+   eff=(base+(d8<<6)) if d8 is not None else None
+   would_load=eff-8 if eff is not None else None
+   local=q(f,rs,sp+0x88)
+   print(f"record+0xd0={hx(d0)} +0xd8_raw={hx(d8raw)} signed={d8}")
+   print(f"selected_base={hx(base)} x8_effective={hx(eff)} would_be_load_addr={hx(would_load)}")
+   print(f"stack_local_sp+0x88={hx(local)} (used later by ldrsw)")
+   # The load/store at 0x1759e54 is conditional. Reconstruct its gate.
+   less=(s32(w9raw)<d8) if w9raw is not None and d8 is not None else None
+   flag=(w12_ctx&1) if w12_ctx is not None else None
+   gate=(less and flag==1) if less is not None and flag is not None else None
+   print(f"branch_cmp_signed_w9_lt_w8={less} w12_bit0={flag} load_store_gate={gate}")
+   if gate is False: print("RESULT: branch skips ldur d0 / str [sp+0x88]; existing stack local survives into later size use.")
+   elif gate is True: print("RESULT: branch executes ldur d0 / str [sp+0x88].")
+   else: print("RESULT: branch gate unresolved from captured registers.")
+   if would_load is not None:
+    print("would-be-load neighborhood (snapshot is after any later store):")
+    for off in range(-0x20,0x21,8): print(f"  {would_load+off:#x}: {hx(q(f,rs,would_load+off))}")
+  print("stack locals:")
+  for off in (0x2c,0x30,0x34,0x38,0x4c,0x80,0x88,0x90,0xa0,0xa8,0xb0,0xc0,0xd0,0xd8,0xe0,0xf0,0xf8):
    print(f"  sp+{off:#x}={hx(q(f,rs,sp+off))}")
 if __name__=="__main__":
  if len(sys.argv)!=2: raise SystemExit("usage: probe_orbitals_memcpy_branch_exact.py dump.dmp")
