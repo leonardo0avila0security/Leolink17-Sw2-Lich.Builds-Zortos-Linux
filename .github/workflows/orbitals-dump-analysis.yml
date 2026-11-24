@@ -333,11 +333,53 @@ jobs:
               b.close()
           PY
 
-      - name: Upload text report only (never the dump)
+      - name: Extract targeted memcpy runtime windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          DUMP="$(cat "$RUNNER_TEMP/orbitals-dump/dump-path.txt")"
+          python tools/extraire_orbitals_memcpy_runtime_corrige.py "$DUMP" -o "$GITHUB_WORKSPACE/orbitals_memcpy_runtime_corrige.zip"
+
+      - name: Disassemble targeted game-code windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re, zipfile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          z = zipfile.ZipFile("orbitals_memcpy_runtime_corrige.zip")
+          report = z.read("rapport_runtime_memcpy_corrige.txt").decode("utf-8", "replace")
+          m = re.search(r"orbitalgame\\.dll : base=0x([0-9A-Fa-f]+)", report)
+          if not m:
+              raise SystemExit("orbitalgame.dll base missing from extraction report")
+          base = int(m.group(1), 16)
+          windows = [
+              ("caller_main_1B5A9300.bin", 0x1B5A9300, 0x240),
+              ("wrapper_1C11DEE0.bin", 0x1C11DEE0, 0x240),
+              ("wrapper_internal_1C11DF00.bin", 0x1C11DF00, 0x240),
+          ]
+          md = Cs(CS_ARCH_X86, CS_MODE_64)
+          out = ["ORBITALS MEMCPY — DISASSEMBLAGE DES FENÊTRES CIBLÉES", f"orbitalgame.dll base=0x{base:016X}"]
+          for name, rva, _ in windows:
+              if name not in z.namelist():
+                  out += ["", f"=== {name}: NON EXTRAIT ==="]
+                  continue
+              data = z.read(name)
+              out += ["", f"=== {name} (RVA 0x{rva:X}) ==="]
+              for ins in md.disasm(data, base+rva):
+                  out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
+          open("runtime-disassembly.txt", "w", encoding="utf-8").write("\\n".join(out)+"\\n")
+          print("\\n".join(out))
+          PY
+
+      - name: Upload text reports and targeted extracts (never the dump)
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: orbitals-dump-analysis
-          path: report.txt
+          path: |
+            report.txt
+            orbitals_memcpy_runtime_corrige.zip
+            runtime-disassembly.txt
           if-no-files-found: warn
           retention-days: 14
