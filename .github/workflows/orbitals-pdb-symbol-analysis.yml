@@ -25,7 +25,26 @@ jobs:
             "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
           echo "f492332de899aa9799ecdf0be4fa55ae7856ad5d7a098aa12f6d2afa8c95d128  orbitals-recomp.zip" | sha256sum --check
           unzip -p orbitals-recomp.zip orbitalgame.dll.pdb > orbitalgame.dll.pdb
-          ls -lh orbitalgame.dll.pdb
+          python - <<'PY'
+          import zipfile
+          z = zipfile.ZipFile("orbitals-recomp.zip")
+          names = z.namelist()
+          print("EXE/PDB candidates in orbitals-recomp.zip:")
+          for n in names:
+              if "orbitals-recomp.exe" in n.lower() or (n.lower().endswith(".pdb") and "exe" in n.lower()):
+                  print(n)
+          exe = next((n for n in names if n.lower().endswith("orbitals-recomp.exe")), None)
+          pdb = next((n for n in names if n.lower().endswith("orbitals-recomp.exe.pdb")), None)
+          if exe:
+              open("orbitals-recomp.exe", "wb").write(z.read(exe))
+              print("Extracted", exe)
+          if pdb:
+              open("orbitals-recomp.exe.pdb", "wb").write(z.read(pdb))
+              print("Extracted", pdb)
+          PY
+          ls -lh orbitalgame.dll.pdb orbitals-recomp.exe* 2>/dev/null || true
+          unzip -Z1 setup-work.zip | grep -Ei '(hostfn|dispatch|nvn_api_core|cpu)' > setup-work-relevant-files.txt || true
+          cat setup-work-relevant-files.txt | head -300
 
       - name: Download original ExeFS and matching generated object
         shell: bash
@@ -51,6 +70,21 @@ jobs:
         run: |
           set -euo pipefail
           command -v llvm-pdbutil
+          if [ -f orbitals-recomp.exe.pdb ]; then
+            llvm-pdbutil dump --summary orbitals-recomp.exe.pdb > exe-pdb-summary.txt
+            llvm-pdbutil dump --publics orbitals-recomp.exe.pdb > exe-pdb-publics.txt
+            llvm-pdbutil dump --globals orbitals-recomp.exe.pdb > exe-pdb-globals.txt
+            {
+              echo "=== EXE PDB SUMMARY ==="
+              cat exe-pdb-summary.txt
+              echo "=== EXE SYMBOLS NEAR RUNTIME DISPATCH / MEMCPY ==="
+              grep -iE "40C00|40CE0|40CB0|40D1F|hostfn_entry|ov_memcpy|rt_dispatch|memcpy|memmove|guest_read" exe-pdb-publics.txt exe-pdb-globals.txt | head -500 || true
+            } > exe-pdb-target-analysis.txt
+            cat exe-pdb-target-analysis.txt
+          else
+            echo "orbitals-recomp.exe.pdb absent from release zip" > exe-pdb-target-analysis.txt
+          fi
+
           llvm-pdbutil dump --summary orbitalgame.dll.pdb > pdb-summary.txt
           llvm-pdbutil dump --publics orbitalgame.dll.pdb > pdb-publics.txt
           llvm-pdbutil dump --globals orbitalgame.dll.pdb > pdb-globals.txt
@@ -275,6 +309,11 @@ jobs:
             pdb-section-layout.txt
             pdb-target-analysis.txt
             pdb-mod667-symbols.txt
+            exe-pdb-summary.txt
+            exe-pdb-publics.txt
+            exe-pdb-globals.txt
+            exe-pdb-target-analysis.txt
+            setup-work-relevant-files.txt
             object-symbols.txt
             object-target-function.txt
             object-relocations.txt
