@@ -13,24 +13,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Download setup and setup-work archives
+      - name: Download setup archives
         run: |
           curl --fail --location --retry 3 --output setup.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup.zip"
           curl --fail --location --retry 3 --output setup-work.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup-work.zip"
-      - name: Inventory actual preparation entrypoints
+      - name: Inspect real setup entrypoints and NUP flow
         run: |
           python - <<'PY'
           import zipfile
           for archive in ("setup.zip","setup-work.zip"):
-              print("\\n===== "+archive+" =====")
+              print("\\n===== "+archive+" ROOT =====")
               with zipfile.ZipFile(archive) as z:
                   names=z.namelist()
+                  roots=sorted({n.split("/",1)[0] for n in names if "/" in n})
+                  print("ROOTS",roots)
+                  targets=[n for n in names if n in (
+                    "setup/src/tools/prepare/nup.py",
+                    "setup/src/tools/prepare/prepare.py",
+                    "setup/src/tools/prepare/gamecopy.py",
+                    "setup/pyproject.toml",
+                    "setup/README.md",
+                    "setup/src/main.py",
+                    "setup/src/__main__.py",
+                    "setup/src/tools/prepare/__main__.py",
+                    "setup/setup.py",
+                    "setup/setup.bat",
+                    "setup/prepare.bat",
+                    "setup/setup-state.json",
+                  )]
+                  for n in targets:
+                      print("\\n===== FILE "+n+" =====")
+                      try: print(z.read(n).decode("utf-8",errors="replace")[:30000])
+                      except Exception as e: print("READ ERROR",e)
+                  print("\\n===== LIKELY LAUNCHERS =====")
                   for n in names:
-                      low=n.lower()
                       base=n.rsplit("/",1)[-1].lower()
-                      if (base in ("setup.py","prepare.py","setup.bat","setup.cmd","setup.exe","prepare.bat","prepare.cmd","pyproject.toml","readme.md")
-                          or "setup-state" in low or "nup" in base or "prepare" in low and (base.endswith(".py") or base.endswith(".bat") or base.endswith(".cmd"))):
-                          info=z.getinfo(n)
-                          print(f"{info.file_size:10} {n}")
-                  print("TOTAL_FILES",len(names))
+                      if base in ("pyproject.toml","uv.lock","setup.bat","setup.cmd","prepare.bat","prepare.cmd","orbitals-recomp.exe","setup-state.json","readme.md"):
+                          print(n)
           PY
