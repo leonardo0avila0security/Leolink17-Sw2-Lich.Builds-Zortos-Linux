@@ -394,3 +394,24 @@ Le bloc hôte fallback `1988E..198AA` conserve `x0` dans `[context+0]`, mais ne 
 La correction minimale candidate est d'écrire le registre source courant (le registre hôte qui porte guest `x1`, `r9` dans le bloc désassemblé) dans `[rsi+8]` avant le dispatch fallback. Le champ `[rsi+0x10]` est déjà égal à `x2` dans ce dump ; il peut être réécrit en même temps pour rendre le marshalling explicite, mais ce n'est pas la valeur fautive observée.
 
 **Statut : cause localisée dans le marshalling du chemin fallback, correctif binaire exact encore à préparer et vérifier.** Ne pas modifier le chargeur d'imports, le wrapper UCRT, ni le champ `-3` de l'objet de données.
+
+
+## Correctif binaire ciblé préparé
+
+Le binaire de la release a été vérifié contre le dump :
+- `orbitalgame.dll` SHA-256 : `8678d073fdffc4f3d518f492dbc3428f7257dc1ebe8467bb85d87a6633d97cf4`
+- CodeView/PDB : GUID `d75ffc7c-ee2d-e2ca-4c4c-44205044422e`, âge 1 — identique au module `orbitalgame.dll` du dump 16952.
+- Le point d'insertion est `RVA 0x1B5A9385`, instruction originale `mov [rsi+0xF0], rax`.
+- Le trampoline utilise le padding INT3 vérifié à `RVA 0x1C7ED286` (0x17A octets disponibles).
+
+Le patch remplace l'instruction de 7 octets par un saut vers le trampoline. Celui-ci :
+1. conserve l'écriture originale du PC guest de retour dans `[rsi+0xF0]` ;
+2. ajoute `mov [rsi+8], r9`, pour transmettre le guest `x1` courant au descripteur hostfn ;
+3. revient à `RVA 0x1B5A938C`, avant l'écriture de destination déjà présente.
+
+L'appel wrapper d'origine reste à son adresse `RVA 0x1B5A939A` : son adresse de retour native ne change pas. Le patch ne modifie ni le chargeur d'import, ni le helper UCRT, ni le reste du jeu. Il ajoute le stockage de source dans le bloc commun ; sur le chemin aligné, où `[rsi+8]` était déjà correct, il réécrit la même valeur.
+
+Patcher reproductible : `tools/nx2/apply_orbitals_memcpy_fallback_patch.py`  
+Workflow de production de l'artefact : https://github.com/sinedgiveaways/tool/actions/runs/45483610141
+
+**État :** le patch a été généré à partir du binaire dont le PDB correspond au dump et les vérifications d'octets/du code cave ont réussi. Il reste à télécharger l'artefact, remplacer uniquement `orbitalgame.dll` dans l'installation existante et effectuer un test runtime. Aucun cycle de préparation ou de recompilation complète n'est nécessaire.
