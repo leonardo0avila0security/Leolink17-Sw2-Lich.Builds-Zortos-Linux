@@ -90,10 +90,10 @@ jobs:
           python - <<'PY'
           import re, subprocess
           text = open("runtime-lib-symbols.txt", errors="replace").read()
-          members = sorted(set(re.findall(r"orbitalgame\\.lib\\(([^)]+)\\)", text)))
+          members = sorted(set(re.findall(r"orbitalgame\.lib\(([^)]+)\)", text)))
           out = []
           for member in members:
-              out.append(f"\\n===== {member} =====")
+              out.append(f"\n===== {member} =====")
               try:
                   data = subprocess.check_output(["llvm-ar", "p", "orbitalgame.lib", member])
                   safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", member)
@@ -109,7 +109,7 @@ jobs:
                           out.append(line)
               except Exception as e:
                   out.append("ERROR: " + str(e))
-          open("runtime-lib-target-disassembly.txt","w",encoding="utf-8").write("\\n".join(out)+"\\n")
+          open("runtime-lib-target-disassembly.txt","w",encoding="utf-8").write("\n".join(out)+"\n")
           print(open("runtime-lib-target-disassembly.txt",encoding="utf-8").read()[:30000])
           PY
 
