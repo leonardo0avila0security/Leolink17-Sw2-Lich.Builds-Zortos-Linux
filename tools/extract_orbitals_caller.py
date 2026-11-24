@@ -89,4 +89,4 @@ with DMP.open("rb") as f:
             if b: lines.append(f"[{k}] {v:#x}: {b.hex(' ')}")
     lines += ["","DISASSEMBLY AROUND RIP:"]+disasm(md,readva(f,rs,max(0,rip-0x40),0x200),max(0,rip-0x40),100)
     (OUT/"exception_context.txt").write_text("\n".join(lines),encoding="utf-8")
-    print("\n".join(lines[:55]))
+    print("\n".join(lines[-180:]))
