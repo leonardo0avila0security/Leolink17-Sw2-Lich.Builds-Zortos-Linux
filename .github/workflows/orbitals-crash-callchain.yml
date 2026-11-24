@@ -63,7 +63,8 @@ jobs:
                   lines.append(f"  {x.address:#016x}: {x.mnemonic:8} {x.op_str}")
           Path("crash-callchain.txt").write_text("\\n".join(lines)+"\\n",encoding="utf-8")
           print("\\n".join(lines))
-          PY     - name: Upload call-chain disassembly
+          PY
+      - name: Upload call-chain disassembly
         uses: actions/upload-artifact@v7
         with:
           name: orbitals-crash-callchain
