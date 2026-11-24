@@ -167,7 +167,7 @@ jobs:
               sym_off = sym_index*24
               st_name, st_info, st_other, st_shndx, st_value, st_size = struct.unpack_from("<IBBHQQ", dynsym, sym_off)
               if st_name < len(dynstr):
-                  end = dynstr.find(b"\\0", st_name)
+                  end = dynstr.find(b"\0", st_name)
                   if end < 0: end = len(dynstr)
                   name = dynstr[st_name:end].decode("utf-8", "replace")
               else:
