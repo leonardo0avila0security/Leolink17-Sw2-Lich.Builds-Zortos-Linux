@@ -1,0 +1,60 @@
+name: orbitals-sdk-target
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-sdk-target.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exefs
+        run: |
+          curl --fail --location --retry 3 -o exefs.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/exefs.zip"
+      - name: Install tools
+        run: python -m pip install --disable-pip-version-check lz4 capstone
+      - name: Disassemble SDK target address
+        run: |
+          python - <<'PY'
+          import struct
+          from zipfile import ZipFile
+          from pathlib import Path
+          import lz4.block
+          from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+          with ZipFile("exefs.zip") as z:
+              nso=z.read("exefs/sdk")
+          assert nso[:4] == b"NSO0", nso[:4]
+          flags=struct.unpack_from("<I",nso,0x0c)[0]
+          segs=[]
+          for idx,(name,off) in enumerate((("text",0x10),("rodata",0x20),("data",0x30))):
+              fileoff,memoff,size=struct.unpack_from("<III",nso,off)
+              comp=struct.unpack_from("<I",nso,0x60+idx*4)[0]
+              raw=nso[fileoff:fileoff+comp]
+              if flags & (1<<idx):
+                  raw=lz4.block.decompress(raw,uncompressed_size=size)
+              else:
+                  raw=raw[:size]
+              segs.append((name,memoff,raw))
+          _,memoff,code=segs[0]
+          out=[f"SDK NSO flags=0x{flags:X} text mem=0x{memoff:X} size=0x{len(code):X}",
+               "Candidate GOT memcpy target guest VA=0x7020002CD0; candidate SDK base=0x7020000000"]
+          for start,end in ((0x2000,0x3400),):
+              md=Cs(CS_ARCH_ARM64,CS_MODE_ARM)
+              out += ["",f"=== sdk text +0x{start:X}..+0x{end:X} ==="]
+              for ins in md.disasm(code[start:min(end,len(code))],0x7020000000+start):
+                  out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
+          Path("sdk-memcpy-target-disassembly.txt").write_text("\n".join(out)+"\n")
+          print("\n".join(out))
+          PY
+      - name: Upload disassembly
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-sdk-target
+          path: sdk-memcpy-target-disassembly.txt
+          retention-days: 14
