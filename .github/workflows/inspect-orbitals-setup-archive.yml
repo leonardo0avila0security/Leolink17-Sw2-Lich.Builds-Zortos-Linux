@@ -1,4 +1,4 @@
-name: inspect-orbitals-runtime-setup-contract
+name: inspect-orbitals-runtime-setup-state
 on:
   push:
     branches:
@@ -14,23 +14,13 @@ jobs:
     steps:
       - name: Download runtime
         run: curl -fL --retry 3 -o runtime.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
-      - name: Inspect executable setup strings
+      - name: Read setup state and config
         run: |
           python - <<'PY'
-          import zipfile, re
+          import zipfile
           with zipfile.ZipFile("runtime.zip") as z:
-              print("ROOTS",sorted({n.split("/",1)[0] for n in z.namelist()}))
-              for n in z.namelist():
-                  if n.lower().endswith("orbitals-recomp.exe"):
-                      data=z.read(n)
-                      print("EXE",n,"SIZE",len(data))
-                      for enc in ("ascii","utf-16le"):
-                          txt=data.decode(enc,errors="ignore")
-                          for term in ("prepare.py","setup/python","setup-state.json","--source","source", "NUP", "Select game"):
-                              hits=[m.start() for m in re.finditer(re.escape(term),txt,re.I)]
-                              if hits: print(enc,term,[(txt[max(0,i-120):i+240]).replace("\\x00"," ") for i in hits[:5]])
-                      break
-              print("ROOT FILES")
-              for n in z.namelist():
-                  if n.count("/")<=1: print(n,z.getinfo(n).file_size)
+              for n in ("setup-state.json","orbitals.ini","orbitalgame.id"):
+                  print("\\n===== "+n+" =====")
+                  try: print(z.read(n).decode("utf-8",errors="replace"))
+                  except KeyError: print("MISSING")
           PY
