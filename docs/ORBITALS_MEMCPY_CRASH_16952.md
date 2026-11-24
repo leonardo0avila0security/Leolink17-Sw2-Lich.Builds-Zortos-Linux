@@ -346,7 +346,7 @@ Le dump montre `R8 = 0x05240500`. Cette taille est cohérente avec le chemin fal
 
 Le problème restant est la source : le helper reçoit `RDX = 0x01460149013D0140`, qui n'est pas un pointeur. Le chemin fallback doit transmettre le registre guest `x1` sélectionné par `csel x1, x9, x8, eq` à `main+0x1759F94`. Le code x86 généré qui correspond à cette branche aboutit au bloc `1988E..198AA` ; ce bloc écrit la destination dans `[context+0]`, puis appelle le wrapper avec retour guest `0x700175A130`, mais ne met pas à jour `[context+8]` (source). Le champ source reste donc une ancienne valeur du contexte. C'est une omission très forte candidate dans la préparation des arguments du chemin fallback, pas une panne du chargeur d'import ni une corruption aléatoire démontrée.
 
-Le correctif candidat, à confirmer avec les valeurs exactes de `x1`, est de sauvegarder le registre source courant dans `[context+8]` sur ce chemin avant le dispatch (et de sauvegarder aussi `x2` dans `[context+0x10]` pour rendre le marshalling explicite). Le probe de pile guest en cours doit déterminer si `x1` vaut `[x21+0x410]` ou la valeur de `[sp+0x38]` au moment du branchement.
+Le correctif candidat consiste à sauvegarder le registre source courant `x1` dans `[context+8]` avant le dispatch. Le probe de pile a ensuite établi que `x1 = 0x11C51F8A8` sur ce chemin. Ce correctif ne traite toutefois pas la taille guest invalide, découverte ensuite.
 
 
 ## Raccordement des deux branches AArch64 et x86
@@ -371,7 +371,7 @@ Le probe de pile guest `45481414761` a fourni les variables locales exactes apr�
 - `SP+0x38 = 0x05241000` (x9 candidat)
 - `SP+0x80 = 0x11C51F8A8` (x8 sélectionné pour x1)
 - `SP+0x88 = 0x01490140` (x25 signé)
-- `x25 << 2 = 0x05240500), exactement le R8 observé dans le helper.
+- `x25 << 2 = 0x05240500`, exactement le R8 observé dans le helper.
 
 Le chemin guest exécute :
 - `ldr x8, [sp, #0x80]` → `x8 = 0x11C51F8A8`
@@ -383,17 +383,17 @@ Le chemin guest exécute :
 **Arguments corrects au point de l'appel fallback :**
 `memcpy(0x12E1A8000C, 0x11C51F8A8, 0x05240500)`.
 
-Le champ `[context+0xD0]` contient lui aussi `0x11C51F8A8`, ce qui corrobore la valeur source attendue. Le champ `[context+8]` contient au contraire `0x01460149013D0140`, qui est la donnée UTF-16 située à `0x11C51F700`, et non le pointeur source. La taille `0x05240500` est correcte ; la destination est correcte ; seul le champ source du descripteur est faux.
+Le champ `[context+0xD0]` contient lui aussi `0x11C51F8A8`, ce qui corrobore la valeur source attendue. Le champ `[context+8]` contient au contraire `0x01460149013D0140`, qui est la donnée UTF-16 située à `0x11C51F700`, et non le pointeur source. La taille `0x05240500` correspond bien au calcul guest `x25 << 2`, mais elle dépasse les régions mémoire engagées ; le champ source du descripteur est en plus faux.
 
 Cette observation écarte l'hypothèse précédente selon laquelle la source attendue serait `0x0CE1682D40` pour ce crash : cette somme appartient à une autre branche de la fonction, pas au chemin fallback réellement pris.
 
-## Cause racine la plus probable
+## Défaut de marshalling distinct, confirmé dans le chemin fallback
 
 Le bloc hôte fallback `1988E..198AA` conserve `x0` dans `[context+0]`, mais ne copie pas le registre guest `x1` dans `[context+8]` avant d'appeler le wrapper. Le contexte contient alors une ancienne valeur de source (ici les octets UTF-16 `0x01460149013D0140`). Le helper natif `orbitals-recomp.exe+0x40CE0` lit ce champ tel quel et transmet la mauvaise adresse à UCRT.
 
 La correction minimale candidate est d'écrire le registre source courant (le registre hôte qui porte guest `x1`, `r9` dans le bloc désassemblé) dans `[rsi+8]` avant le dispatch fallback. Le champ `[rsi+0x10]` est déjà égal à `x2` dans ce dump ; il peut être réécrit en même temps pour rendre le marshalling explicite, mais ce n'est pas la valeur fautive observée.
 
-**Statut : cause localisée dans le marshalling du chemin fallback, correctif binaire exact encore à préparer et vérifier.** Ne pas modifier le chargeur d'imports, le wrapper UCRT, ni le champ `-3` de l'objet de données.
+**Statut : défaut de marshalling source confirmé, mais il n'explique pas à lui seul le crash complet.** Le champ source stale doit être corrigé, mais l'origine de la taille excessive reste la priorité. Ne pas modifier le chargeur d'imports ni le wrapper UCRT.
 
 
 ## Correctif binaire ciblé préparé
@@ -420,8 +420,8 @@ Workflow de production de l'artefact : https://github.com/sinedgiveaways/tool/ac
 ## Nouvelle découverte : la taille guest est elle-même invalide
 
 Le contrôle `MemoryInfoList` du dump a vérifié la couverture réelle des plages, y compris les régions adjacentes :
-- source guest calculée `x1 = 0x11C51F8A8) : région engagée `0x11C42E000 + 0x100000), fin `0x11C52E000). La lecture atteint une région réservée/non engagée après seulement `0xE758` octets.
-- destination `0x12E1A8000C) : région engagée `0x12E1A80000 + 0x180000), fin `0x12E1C00000`. L'écriture atteint une région réservée/non engagée après `0x17FFF4` octets.
+- source guest calculée `x1 = 0x11C51F8A8` : région engagée `0x11C42E000 + 0x100000`, fin `0x11C52E000`. La lecture atteint une région réservée/non engagée après seulement `0xE758` octets.
+- destination `0x12E1A8000C` : région engagée `0x12E1A80000 + 0x180000`, fin `0x12E1C00000`. L'écriture atteint une région réservée/non engagée après `0x17FFF4` octets.
 - taille demandée : `0x05240500` = 86,246,656 octets.
 
 Donc, même avec le pointeur source corrigé à `0x11C51F8A8`, le memcpy traverserait une zone non engagée côté source après environ 59 Ko et côté destination après environ 1,5 Mo. **La taille n'est pas sûre et le patch source seul ne constitue pas un correctif jouable.**
@@ -437,6 +437,6 @@ L'origine de cette valeur est également identifiée dans le flot guest :
 - `main+0x1759E58: str d0, [sp, #0x88]`
 - puis `ldrsw x25, [sp, #0x88]`.
 
-La priorité devient de reconstruire le pointeur `x8) et les données à `[x8-8]` à `0x1759E54), puis de comprendre pourquoi leur DWORD bas vaut `0x01490140`. Il faut vérifier le layout de l'entrée sélectionnée dans la table `x27 = base + w20 * 0xE8` et ne pas supposer que le champ `-3` de `0x0CE01F2C00` est celui de `x27+0xD8` : cette correspondance n'est pas encore établie.
+La priorité devient de reconstruire le pointeur `x8` et les données à `[x8-8]` à `0x1759E54`, puis de comprendre pourquoi leur DWORD bas vaut `0x01490140`. Il faut vérifier le layout de l'entrée sélectionnée dans la table `x27 = base + w20 * 0xE8` et ne pas supposer que le champ `-3` de `0x0CE01F2C00` est celui de `x27+0xD8` : cette correspondance n'est pas encore établie.
 
 Rapport MemoryInfoList : https://github.com/sinedgiveaways/tool/actions/runs/45484336193
