@@ -56,7 +56,8 @@ jobs:
             "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup-work.zip"
           echo "4daff8c457fb71de797e328c3eb0124170a3ef51677867cd71bcedbf66c30f40  setup-work.zip" | sha256sum --check
           unzip -p setup-work.zip setup-work/obj/main_main_0184.o > main_main_0184.o
-          ls -lh main.nso main_main_0184.o
+          unzip -p setup-work.zip setup-work/obj/orbitalgame.lib > orbitalgame.lib
+          ls -lh main.nso main_main_0184.o orbitalgame.lib
           python - <<'PY'
           import zipfile
           z = zipfile.ZipFile("setup-work.zip")
@@ -78,6 +79,39 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y llvm
+
+      - name: Inspect exact linked runtime library
+        shell: bash
+        run: |
+          set -euo pipefail
+          llvm-ar t orbitalgame.lib > orbitalgame-lib-members.txt
+          llvm-nm -A -C orbitalgame.lib > runtime-lib-all-symbols.txt
+          grep -iE 'hostfn_entry|hostfn_register|hostfn_blocking|hostfn_tracked|ov_memcpy|rt_dispatch|host_lookup|fnprof_hit|impcensus_hit|guest_read' runtime-lib-all-symbols.txt > runtime-lib-symbols.txt || true
+          python - <<'PY'
+          import re, subprocess
+          text = open("runtime-lib-symbols.txt", errors="replace").read()
+          members = sorted(set(re.findall(r"orbitalgame\\.lib\\(([^)]+)\\)", text)))
+          out = []
+          for member in members:
+              out.append(f"\\n===== {member} =====")
+              try:
+                  data = subprocess.check_output(["llvm-ar", "p", "orbitalgame.lib", member])
+                  safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", member)
+                  path = "runtime-object-" + safe
+                  open(path, "wb").write(data)
+                  dis = subprocess.check_output(["llvm-objdump", "-d", "--demangle", path], text=True, errors="replace")
+                  lines = dis.splitlines()
+                  keep = False
+                  for line in lines:
+                      if re.match(r"^[0-9A-Fa-f]+ <.*>:$", line.strip()):
+                          keep = bool(re.search(r"hostfn_entry|hostfn_register|hostfn_blocking|hostfn_tracked|ov_memcpy|rt_dispatch|host_lookup|fnprof_hit|impcensus_hit|guest_read", line, re.I))
+                      if keep:
+                          out.append(line)
+              except Exception as e:
+                  out.append("ERROR: " + str(e))
+          open("runtime-lib-target-disassembly.txt","w",encoding="utf-8").write("\\n".join(out)+"\\n")
+          print(open("runtime-lib-target-disassembly.txt",encoding="utf-8").read()[:30000])
+          PY
 
       - name: Verify PDB identity and extract symbols
         shell: bash
@@ -329,6 +363,9 @@ jobs:
             exe-pdb-target-analysis.txt
             setup-work-relevant-files.txt
             setup-work-zip-list.txt
+            orbitalgame-lib-members.txt
+            runtime-lib-symbols.txt
+            runtime-lib-target-disassembly.txt
             orbitals-recomp-zip-list.txt
             orbitals-recomp-zip-relevant.txt
             object-symbols.txt
