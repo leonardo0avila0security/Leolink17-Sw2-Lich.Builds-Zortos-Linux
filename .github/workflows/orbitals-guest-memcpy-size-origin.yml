@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/orbitals-guest-memcpy-size-origin.yml"
       - "tools/nx2/probe_orbitals_guest_table.py"
+      - "tools/nx2/probe_orbitals_size_field.py"
   workflow_dispatch:
 
 permissions:
@@ -30,10 +31,15 @@ jobs:
       - name: Reconstruct x27 record and d0 load
         run: |
           python tools/nx2/probe_orbitals_guest_table.py "$DUMP" | tee guest-size-origin.txt
-      - name: Upload guest size origin report
+      - name: Validate candidate owner and exact size field
+        run: |
+          python tools/nx2/probe_orbitals_size_field.py "$DUMP" | tee guest-size-field-owner.txt
+      - name: Upload guest size origin reports
         uses: actions/upload-artifact@v7
         with:
           name: orbitals-guest-memcpy-size-origin
-          path: guest-size-origin.txt
+          path: |
+            guest-size-origin.txt
+            guest-size-field-owner.txt
           if-no-files-found: error
           retention-days: 14
