@@ -1,0 +1,102 @@
+name: orbitals-sdk-dynamic-symbols
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-sdk-dynamic-symbols.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  symbols:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exefs
+        run: curl --fail --location --retry 3 -o exefs.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/exefs.zip"
+      - name: Install parser
+        run: python -m pip install --disable-pip-version-check lz4
+      - name: Parse SDK MOD0 and dynamic symbols
+        run: |
+          python - <<'PY'
+          import struct
+          from zipfile import ZipFile
+          from pathlib import Path
+          import lz4.block
+          with ZipFile("exefs.zip") as z: nso=z.read("exefs/sdk")
+          flags=struct.unpack_from("<I",nso,0x0c)[0]
+          segs=[]
+          for idx,(name,off) in enumerate((("text",0x10),("rodata",0x20),("data",0x30))):
+              fileoff,memoff,size=struct.unpack_from("<III",nso,off)
+              comp=struct.unpack_from("<I",nso,0x60+idx*4)[0]
+              raw=nso[fileoff:fileoff+comp]
+              raw=lz4.block.decompress(raw,uncompressed_size=size) if flags&(1<<idx) else raw[:size]
+              segs.append((name,memoff,raw))
+          def readva(va,n):
+              for name,base,b in segs:
+                  if base<=va and va+n<=base+len(b): return b[va-base:va-base+n]
+              # Try image-base-relative addresses using the SDK candidate base.
+              va2=va-0x7020000000
+              for name,base,b in segs:
+                  if base<=va2 and va2+n<=base+len(b): return b[va2-base:va2-base+n]
+              return None
+          def u32(b,o): return struct.unpack_from("<I",b,o)[0]
+          out=[f"SDK flags=0x{flags:X}"]
+          mods=[]
+          for name,base,b in segs:
+              pos=0
+              while True:
+                  i=b.find(b"MOD0",pos)
+                  if i<0: break
+                  mods.append((name,base+i,b,i))
+                  pos=i+1
+              for needle in (b"memcpy\\0",b"memmove\\0",b"memset\\0"):
+                  p=0
+                  while True:
+                      i=b.find(needle,p)
+                      if i<0: break
+                      out.append(f"string {needle[:-1].decode()} at {name}+0x{i:X} (mem=0x{base+i:X})")
+                      p=i+1
+          for name,base,b,i in mods:
+              modva=base+i
+              out.append(f"MOD0 at {name}+0x{i:X} mem=0x{modva:X}")
+              vals=struct.unpack_from("<7I",b,i)
+              out.append("MOD0 fields="+", ".join(f"{x:#x}" for x in vals))
+              # Standard MOD0 dynamic pointer is field +0x18 (relative to MOD0).
+              for fieldoff in (0x18,0x1c,0x14):
+                  rel=struct.unpack_from("<i",b,i+fieldoff)[0]
+                  dynva=modva+rel
+                  dyn=readva(dynva,16)
+                  if not dyn: continue
+                  out.append(f"candidate dynamic field +0x{fieldoff:X}: rel={rel:#x} va={dynva:#x}")
+                  tags={}
+                  for k in range(4096):
+                      ent=readva(dynva+k*16,16)
+                      if not ent: break
+                      tag,val=struct.unpack("<qQ",ent)
+                      if tag==0: break
+                      tags[tag]=val
+                  if 5 not in tags or 6 not in tags: continue
+                  strtab=tags[5]; symtab=tags[6]; syment=tags.get(11,24); strsz=tags.get(10,0)
+                  out.append(f"DT_STRTAB={strtab:#x} DT_SYMTAB={symtab:#x} STRSZ={strsz:#x} SYMENT={syment}")
+                  for n in range(0,100000):
+                      ent=readva(symtab+n*syment,24)
+                      if not ent: break
+                      st_name,st_info,st_other,st_shndx,st_value,st_size=struct.unpack("<IBBHQQ",ent)
+                      if st_name==0 or st_name>=strsz: continue
+                      raw=readva(strtab+st_name,64)
+                      if not raw: continue
+                      nm=raw.split(b"\\0",1)[0].decode("utf-8","replace")
+                      if nm in ("memcpy","memmove","memset") or "memcpy" in nm.lower():
+                          out.append(f"SYMBOL {nm}: value={st_value:#x} size={st_size:#x} shndx={st_shndx} info={st_info:#x}")
+          Path("sdk-dynamic-symbols.txt").write_text("\\n".join(out)+"\\n")
+          print("\\n".join(out))
+          PY
+      - name: Upload symbol report
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-sdk-dynamic-symbols
+          path: sdk-dynamic-symbols.txt
+          retention-days: 14
