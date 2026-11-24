@@ -1,0 +1,63 @@
+name: orbitals-rt-dispatch-export
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-rt-dispatch-export.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download matching host executable and DLL
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output orbitals-recomp.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
+          python - <<'PY'
+          from zipfile import ZipFile
+          from pathlib import Path
+          z=ZipFile("orbitals-recomp.zip")
+          for name in ("orbitals-recomp.exe","orbitalgame.dll"):
+            data=z.read(name)
+            Path(name).write_bytes(data)
+            print(name,len(data))
+          PY
+      - name: Resolve rt_dispatch export and disassemble
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y llvm
+          llvm-readobj --coff-exports --coff-imports orbitals-recomp.exe > exe-pe-tables.txt
+          llvm-readobj --coff-exports --coff-imports orbitalgame.dll > dll-pe-tables.txt
+          grep -ni -C 5 'rt_dispatch' exe-pe-tables.txt dll-pe-tables.txt > rt-dispatch-pe-hits.txt || true
+          llvm-objdump -d --demangle --no-show-raw-insn --disassemble-symbols=rt_dispatch orbitals-recomp.exe > rt-dispatch-disassembly.txt || true
+          {
+            echo "RT_DISPATCH PE TABLE HITS"
+            cat rt-dispatch-pe-hits.txt
+            echo
+            echo "RT_DISPATCH SYMBOL DISASSEMBLY"
+            cat rt-dispatch-disassembly.txt
+          } > rt-dispatch-report.txt
+          cat rt-dispatch-report.txt
+      - name: Upload dispatch resolution
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-rt-dispatch-resolution
+          path: |
+            rt-dispatch-report.txt
+            rt-dispatch-pe-hits.txt
+            exe-pe-tables.txt
+            dll-pe-tables.txt
+            rt-dispatch-disassembly.txt
+          if-no-files-found: error
+          retention-days: 14
