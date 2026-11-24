@@ -41,7 +41,7 @@ for ins in md.disasm(d[o:o+0x5000],base+FUNC):
   hits.append(ins.address-base)
 print("\nRBX-0x98 REFERENCES",*[hex(x) for x in hits],sep="\n")
 for r in hits:
- show(r-0x30,0x80,"local access context")
+ show(r,0x80,"local access instruction and following code")
 # Verify the already identified candidate cave only; do not scan the 500 MB .text byte-by-byte.
 cave=0x1C7ED286; co=off(cave,0x17A)
 print("\\nKNOWN_CAVE",hex(cave),"file",hex(co) if co is not None else "not-raw-backed",
