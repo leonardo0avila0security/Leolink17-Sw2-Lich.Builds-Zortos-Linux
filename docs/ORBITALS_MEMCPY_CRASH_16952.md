@@ -196,3 +196,32 @@ Le probe a été exécuté avec succès sur le dump original. Correction arithm�
 - Le mismatch reste établi : le callsite guest de retour `0x700175A130` doit passer une taille `0` ou `4`, alors que le helper reçoit `0x05240500`. Le source reçu est aussi différent du résultat d'addition attendu `0x0CE1682D40`.
 
 Probe : https://github.com/sinedgiveaways/tool/actions/runs/45467398410
+
+
+## PDB et chemin réel de dispatch — vérification supplémentaire
+
+Le PDB exact du DLL de la release mappe les symboles générés vers ces RVA (section `.text`, base de section +0x1000) :
+- `f_7001759b20` -> `orbitalgame.dll+0x1B5A8470`
+- `f_7001750480` -> `orbitalgame.dll+0x1B5A35B0`
+- `f_70070c1de0` -> `orbitalgame.dll+0x1C11DF00`
+- `f_70070c1df0` -> `orbitalgame.dll+0x1C11DF60`
+- thunk import `rt_dispatch` -> `orbitalgame.dll+0x1C7ED0E0`
+
+Le callsite hôte `orbitalgame.dll+0x1B5A939A` est donc bien dans `f_7001759b20` et son appel à `f_70070c1de0` correspond au retour guest `0x700175A130`.
+
+Le wrapper `f_70070c1de0` à `+0x1C11DF00` possède deux chemins :
+- le chemin normal charge le GOT `0x700900A008`, écrit les métadonnées d'import dans le contexte (`+0x80`, `+0x88`, `+0x108`) puis passe à `rt_dispatch` via le thunk `+0x1C7ED0E0) ;
+- le chemin profilé appelle d'abord `fnprof_hit` via le thunk `+0x1C7ED0C0`, restaure ensuite `RCX) au contexte d'appel et rejoint le chemin normal.
+
+Le retour de pile `orbitalgame.dll+0x1C11DF58` prouve que le chemin profilé a été pris pour le memcpy fautif. Le thunk `+0x1C7ED0C0` est `fnprof_hit`, pas `rt_dispatch` ; le vrai thunk `rt_dispatch` est `+0x1C7ED0E0`. Cela corrige l'interprétation initiale du wrapper.
+
+Dans l'exécutable hôte, `fnprof_hit` :
+- appelle `impcensus_hit` lorsque `impcensus_on` est actif ;
+- possède un cas spécial qui appelle `rt_patch_record_entry` si son premier argument est `0x7001759b20), et `rt_patch_free_entry` pour `0x70000bf040`.
+Pour l'appel de memcpy observé, le premier argument de `fnprof_hit` est l'adresse du wrapper `0x70070c1de0`, donc ce passage précis ne déclenche pas le cas spécial `f_7001759b20`. Il reste à lire le flag `g_orbitals_entry_probe` et à vérifier si un probe a patché l'entrée de `f_7001759b20` au moment de son invocation.
+
+Le dispatch hostfn `+0x36E50` transmet le contexte au slot `memcpy` `+0x40CE0`. Le helper copie directement `[context]`, `[context+8]), `[context+0x10]) dans RCX/RDX/R8. Le wrapper hostfn de tracking `+0x37C10` ne fait qu'incrémenter/décrémenter le compteur de contexte autour de l'appel ; il ne réécrit pas les arguments. Le chemin effectif et les flags `kern_host_track` / `g_orbitals_entry_probe` sont encore en cours de vérification.
+
+Artefacts :
+- PDB map : https://github.com/sinedgiveaways/tool/actions/runs/45468282799
+- résolution et désassemblage dispatch/profiling : https://github.com/sinedgiveaways/tool/actions/runs/45469242197
