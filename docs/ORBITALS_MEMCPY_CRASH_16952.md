@@ -363,3 +363,35 @@ Le code hôte généré contient le test correspondant :
 Le dump présente exactement la signature attendue d'un champ source non rafraîchi : destination correcte, taille cohérente avec `x2`, source égale à des octets de données UTF-16 provenant d'un objet guest. Le diagnostic se déplace donc vers la génération/mise à jour du contexte d'appel du chemin fallback de `f_7001759b20`.
 
 Désassemblage guest complet : https://github.com/sinedgiveaways/tool/actions/runs/45480761866
+
+
+## Valeur exacte de x1 sur le chemin fallback
+
+Le probe de pile guest `45481414761` a fourni les variables locales exactes après le prologue :
+- `SP+0x20 = 0x12E1A80000` (x19 local)
+- `SP+0x38 = 0x05241000` (x9 candidat)
+- `SP+0x80 = 0x11C51F8A8` (x8 sélectionné pour x1)
+- `SP+0x88 = 0x01490140` (x25 signé)
+- `x25 << 2 = 0x05240500), exactement le R8 observé dans le helper.
+
+Le chemin guest exécute :
+- `ldr x8, [sp, #0x80]` → `x8 = 0x11C51F8A8`
+- `cmp x8, #0`
+- `csel x1, x9, x8, eq` → comme x8 est non nul, `x1 = 0x11C51F8A8`
+- `x2 = x25 << 2 = 0x05240500`
+- destination guest observée : `x0 = 0x12E1A8000C`.
+
+**Arguments corrects au point de l'appel fallback :**
+`memcpy(0x12E1A8000C, 0x11C51F8A8, 0x05240500)`.
+
+Le champ `[context+0xD0]` contient lui aussi `0x11C51F8A8), ce qui corrobore la valeur source attendue. Le champ `[context+8]` contient au contraire `0x01460149013D0140), qui est la donnée UTF-16 située à `0x11C51F700), et non le pointeur source. La taille `0x05240500` est correcte ; la destination est correcte ; seul le champ source du descripteur est faux.
+
+Cette observation écarte l'hypothèse précédente selon laquelle la source attendue serait `0x0CE1682D40` pour ce crash : cette somme appartient à une autre branche de la fonction, pas au chemin fallback réellement pris.
+
+## Cause racine la plus probable
+
+Le bloc hôte fallback `1988E..198AA` conserve `x0` dans `[context+0]`, mais ne copie pas le registre guest `x1` dans `[context+8]` avant d'appeler le wrapper. Le contexte contient alors une ancienne valeur de source (ici les octets UTF-16 `0x01460149013D0140`). Le helper natif `orbitals-recomp.exe+0x40CE0` lit ce champ tel quel et transmet la mauvaise adresse à UCRT.
+
+La correction minimale candidate est d'écrire le registre source courant (le registre hôte qui porte guest `x1`, `r9` dans le bloc désassemblé) dans `[rsi+8]` avant le dispatch fallback. Le champ `[rsi+0x10]` est déjà égal à `x2` dans ce dump ; il peut être réécrit en même temps pour rendre le marshalling explicite, mais ce n'est pas la valeur fautive observée.
+
+**Statut : cause localisée dans le marshalling du chemin fallback, correctif binaire exact encore à préparer et vérifier.** Ne pas modifier le chargeur d'imports, le wrapper UCRT, ni le champ `-3` de l'objet de données.
