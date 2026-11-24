@@ -415,6 +415,34 @@ Workflow de production de l'artefact : https://github.com/sinedgiveaways/tool/ac
 **État : patch partiel généré, ne pas l'appliquer pour le gameplay à ce stade.** Les vérifications binaires ont réussi, mais un contrôle séparé des régions mémoire a révélé que le memcpy guest demande 86,246,656 octets alors que les régions engagées autour de la source et de la destination sont beaucoup plus petites. Corriger uniquement le champ source déplacerait le crash plus loin dans la copie et pourrait corrompre la mémoire. L'artefact est conservé comme expérience diagnostique versionnée ; ne remplace pas encore le DLL de ton installation.
 
 
+
+
+## Cause du size 86 Mo : local de pile non initialisé sur une branche
+
+Le contrôle des registres et du code hôte donne maintenant une explication directe de la taille absurde :
+
+- Le local guest `[sp+0x88]` est lu à `main+0x1759F4C` par `ldrsw x25,[sp,#0x88]`, puis multiplié par 4 à `main+0x1759F7C`.
+- Dans le code hôte généré, le seul store vers l'emplacement correspondant `-0x98(%rbx)` est `orbitalgame.dll+0x190BD: movq %r9,-0x98(%rbx)`. La seule lecture ultérieure est `+0x19323: movslq -0x98(%rbx),%r8`. La recherche dans toute la fonction ne trouve aucun autre store vers ce slot.
+- Le store `+0x190BD` appartient au chemin correspondant à la branche conditionnelle qui passe par `+0x18FDA`. Le chemin alternatif saute ce store, mais rejoint ensuite le code qui lit le local.
+
+Valeurs reconstruites dans le dump :
+- `x29=0x11C51F740`, `[x29-8]=0x128F170008)
+- index de boucle `0x78), valeur signée chargée `w9=-1159757815)
+- `w8=[x27+0xD8]=-3)
+- bit 0 du flag lu depuis le contexte `+0x60 = 0)
+- `w9 < w8` est vrai, mais `w12 & (w9 < w8)` vaut zéro à cause du flag. La branche guest `tbz ...` est donc prise et le seul store du local est sauté.
+- Le local contient pourtant `[sp+0x88]=0x01490140) au moment du crash ; cette valeur est ensuite utilisée comme taille, donnant `0x05240500) (86,246,656 octets).
+
+**Conclusion fortement étayée :** sur le chemin observé, le size est lu depuis un local de pile qui n'a pas été initialisé par le chemin courant. La valeur résiduelle `0x01490140` devient le nombre d'octets de la copie. C'est la cause immédiate de la taille démesurée et de la lecture/écriture hors des régions engagées. Le champ `-3` intervient dans la comparaison, mais n'est pas à lui seul la taille ; ne pas le patcher isolément.
+
+## Correctif à préparer
+
+1. Initialiser `[sp+0x88]` sur tous les chemins, ou faire en sorte que le chemin qui saute son store ne rejoigne pas la lecture/copie qui consomme ce local. La valeur par défaut correcte doit être déterminée à partir du rôle de cette branche ; ne pas mettre arbitrairement une limite de taille.
+2. Corriger séparément le marshalling du host-call : écrire le vrai registre source `x1` dans `[context+8]` avant d'appeler le helper. Le champ actuel contient une valeur non canonique.
+3. Vérifier que les arguments finaux sont des pointeurs de données et une longueur compatible avec les régions allouées.
+
+Le patch qui ne rafraîchit que `[context+8]` reste **diagnostic uniquement**. Il ne corrige pas le local de taille non initialisé et ne doit pas être utilisé pour jouer.
+
 ## Nouvelle découverte : la taille guest est elle-même invalide
 
 Le contrôle `MemoryInfoList` du dump a vérifié la couverture réelle des plages, y compris les régions adjacentes :
