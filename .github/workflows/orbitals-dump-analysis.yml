@@ -402,7 +402,7 @@ jobs:
           exe_match = re.search(r"orbitals-recomp\.exe : base=0x([0-9A-Fa-f]+)", report)
           if not dll_match or not exe_match:
               raise SystemExit("Module base missing from extraction report")
-          bases = {"dll": int(dll_match.group(1), 16), "exe": int(exe_match.group(1), 16)}
+          bases = {"dll": int(dll_match.group(1), 16), "exe": int(exe_match.group(1), 16), "abs": 0}
           windows = [
               ("caller_main_1B5A8F00.bin", "dll", 0x1B5A8F00),
               ("caller_main_1B5A9300.bin", "dll", 0x1B5A9300),
@@ -412,6 +412,7 @@ jobs:
               ("runtime_call_dispatch_1C7ED0E0.bin", "dll", 0x1C7ED0E0),
               ("dll_memcpy_1C7C6F90.bin", "dll", 0x1C7C6F90),
               ("dll_memmove_1C7C6CD0.bin", "dll", 0x1C7C6CD0),
+              ("resolved_memcpy_target_7020002CD0.bin", "abs", 0x7020002CD0),
               ("exe_copy_helper_40C000.bin", "exe", 0x40C00),
               ("exe_memcpy_thunk_70C400.bin", "exe", 0x70C400),
               ("exe_pre_copy_helper_29FCB0.bin", "exe", 0x29FCB0),
@@ -430,6 +431,18 @@ jobs:
                   out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
           open("runtime-disassembly.txt", "w", encoding="utf-8").write("\n".join(out)+"\n")
           print("\n".join(out))
+          for global_name in ("dll_dispatch_resolver_global", "dll_dispatch_call_global"):
+              ptr_file = global_name + ".bin"
+              target_file = global_name + "_target.bin"
+              if ptr_file in z.namelist():
+                  ptr = int.from_bytes(z.read(ptr_file)[:8], "little")
+                  out += ["", f"=== {global_name} target 0x{ptr:016X} ==="]
+                  if target_file in z.namelist():
+                      for ins in md.disasm(z.read(target_file), ptr):
+                          out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
+                  else:
+                      out.append("target code not captured")
+          open("runtime-dispatch-targets.txt", "w", encoding="utf-8").write("\\n".join(out)+"\\n")
           marker = "[MEMOIRE AUTOUR DU MEMCPY FAUTIF]"
           pos = report.find(marker)
           open("fault-memory-analysis.txt", "w", encoding="utf-8").write(report[pos:] if pos >= 0 else "Memory section not present in runtime report\\n")
@@ -445,6 +458,7 @@ jobs:
             orbitals_memcpy_runtime_corrige.zip
             runtime-disassembly.txt
             fault-memory-analysis.txt
+            runtime-dispatch-targets.txt
             build-assets/asset-inventory.txt
             build-assets/extracted-symbol-files.txt
             build-assets/matching-symbols.zip
