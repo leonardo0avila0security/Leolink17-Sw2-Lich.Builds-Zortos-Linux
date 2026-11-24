@@ -29,7 +29,35 @@ jobs:
         run: python -m pip install --disable-pip-version-check numpy lz4 capstone
       - name: Disassemble the crash caller and its callers
         run: |
-          python source/tools/analisis/frame_report.py exefs/exefs --func f_7001759b20 --func f_70017508e0 --func f_700174f720 --func f_7001718240 --out crash-callchain.txt
+          python - <<'PY'
+          import sqlite3, tempfile, sys
+          from pathlib import Path
+          sys.path.insert(0, "source/tools/analisis")
+          import frame_report as fr
+          exefs=Path("exefs/exefs")
+          with tempfile.TemporaryDirectory() as tmp:
+              dbpath=Path(tmp)/"bindb.sqlite"
+              fr.bindb.build(exefs, dbpath)
+              db=sqlite3.connect(dbpath)
+              rep=fr.Report(db, exefs)
+              targets=[0x7001759B20,0x70017508E0,0x700174F720,0x7001718240]
+              for addr in targets:
+                  f=rep.function_at(addr)
+                  rep.out("")
+                  if not f:
+                      rep.out(f"== {addr:#x}: no function found")
+                      continue
+                  rep.out(f"== guest function {addr:#x}: {rep.rel(f[0])}..{rep.rel(f[1])} size={(f[1]-f[0])//4} instructions")
+                  rep.disasm(f[0],f[1],160)
+                  calls=db.execute("SELECT target FROM call WHERE caller=? ORDER BY target LIMIT 100",(f[0],)).fetchall()
+                  rep.out("  DIRECT CALL TARGETS:")
+                  for (t,) in calls:
+                      callee=rep.function_at(t)
+                      rep.out(f"    {rep.rel(t)}" + (f" -> {callee[2]}" if callee and callee[2] else ""))
+              db.close()
+              Path("crash-callchain.txt").write_text("\\n".join(rep.lines)+"\\n",encoding="utf-8")
+              print("\\n".join(rep.lines))
+          PY
       - name: Upload call-chain disassembly
         uses: actions/upload-artifact@v7
         with:
