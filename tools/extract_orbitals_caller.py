@@ -87,6 +87,19 @@ with DMP.open("rb") as f:
         if v:
             b=readva(f,rs,v,0x80)
             if b: lines.append(f"[{k}] {v:#x}: {b.hex(' ')}")
+    lines += ["","MEMORY RANGE COVERAGE:"]
+    for k in ("rcx","rdx","rsi"):
+        v=regs[k]
+        hit=next(((a,n) for a,n,_ in rs if a<=v<a+n),None)
+        lines.append(f"{k}={v:#x}: "+(f"captured range [{hit[0]:#x},{hit[0]+hit[1]:#x}) remaining={hit[0]+hit[1]-v:#x}" if hit else "not present in minidump memory ranges"))
+    desc=readva(f,rs,regs["rsi"],0x200)
+    lines += ["","DESCRIPTOR / RSI QWORDS (0x000..0x1F8):"]
+    if desc:
+        for off in range(0,len(desc)-7,8):
+            q=struct.unpack_from("<Q",desc,off)[0]
+            lines.append(f"RSI+0x{off:03X} = {q:#018x}")
+    else:
+        lines.append("<0x200 bytes at RSI not fully captured in one memory range>")
     lines += ["","DISASSEMBLY AROUND RIP:"]+disasm(md,readva(f,rs,max(0,rip-0x40),0x200),max(0,rip-0x40),100)
     (OUT/"exception_context.txt").write_text("\n".join(lines),encoding="utf-8")
     print("\n".join(lines[-180:]))
