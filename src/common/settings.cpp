@@ -11,6 +11,8 @@
 #endif
 #include <algorithm>
 #include <atomic>
+#include <bit>
+#include <cmath>
 #include <compare>
 #include <cstddef>
 #include <deque>

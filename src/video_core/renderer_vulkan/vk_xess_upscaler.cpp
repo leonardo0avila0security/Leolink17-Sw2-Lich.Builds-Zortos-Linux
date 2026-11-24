@@ -424,7 +424,21 @@ struct XessUpscaler::Impl {
             .textureHeapOffset = 0,
             .pipelineCache = VK_NULL_HANDLE,
         };
-        if (api->init(context, &init_params) < 0) {
+        const xess_result_t init_result = api->init(context, &init_params);
+        if (init_result == XESS_RESULT_ERROR_DEVICE_OUT_OF_MEMORY) {
+            api->destroy_context(context);
+            context = nullptr;
+            intermediate_view = {};
+            intermediate_image = {};
+            intermediate_initialized.store(false, std::memory_order_relaxed);
+            LogFallback(input_size, output_extent, aa, use_intermediate, xess_extent, optimal,
+                        minimum, maximum, "device ran out of memory while initializing XeSS");
+            rejected_input_size = input_size;
+            rejected_output_size = output_extent;
+            initialization_scheduled.store(false, std::memory_order_release);
+            return;
+        }
+        if (init_result < 0) {
             Fail("initialization failed");
             return;
         }

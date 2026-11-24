@@ -509,7 +509,10 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
         case Settings::OcarinaRenderInput::P1080: input = {1920, 1080}; break;
         case Settings::OcarinaRenderInput::P1440: input = {2560, 1440}; break;
         case Settings::OcarinaRenderInput::Custom:
-            input = Settings::OcarinaRenderInputResolution();
+            input = custom_input_width != nullptr
+                ? Settings::OcarinaCustomRenderInputResolution(
+                      static_cast<u32>(custom_input_width->value()))
+                : Settings::OcarinaRenderInputResolution();
             break;
         case Settings::OcarinaRenderInput::Legacy:
         default:
