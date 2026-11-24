@@ -20,8 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download the exact existing runtime (no recompilation)
+      - name: Download original setup package and exact existing runtime
         run: |
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output setup.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup.zip"
           curl --fail --location --retry 3 --retry-all-errors \
             --output orbitals-recomp.zip \
             "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
@@ -33,21 +36,21 @@ jobs:
 
       - name: Assemble a clean full runtime folder
         run: |
-          python tools/nx2/package_orbitals_clean_memcpy_build.py
+          python tools/nx2/package_orbitals_clean_memcpy_build.py --setup-source setup.zip
           mkdir -p clean-folder
           python - <<'PY'
           import zipfile
-          with zipfile.ZipFile("Orbitals-Recomp-Memcpy-Fix-Candidate.zip") as z:
+          with zipfile.ZipFile("Orbitals-Recomp-Memcpy-Fix-Setup-Candidate.zip") as z:
               z.extractall("clean-folder")
           PY
-          test -f clean-folder/Orbitals-Recomp-Memcpy-Fix-Candidate/README-FIRST.txt
-          test -f clean-folder/Orbitals-Recomp-Memcpy-Fix-Candidate/PATCH-REPORT.txt
+          test -f clean-folder/Orbitals-Recomp-Memcpy-Fix-Setup-Candidate/README-FIRST.txt
+          test -f clean-folder/Orbitals-Recomp-Memcpy-Fix-Setup-Candidate/PATCH-REPORT.txt
           find clean-folder -maxdepth 4 -type f | head -80
 
       - name: Upload full clean folder and portable ZIP
         uses: actions/upload-artifact@v7
         with:
-          name: Orbitals-Recomp-Memcpy-Fix-Candidate-CLEAN-FULL-BUILD
+          name: Orbitals-Recomp-Memcpy-Fix-Setup-Candidate-CLEAN-FULL-BUILD
           path: |
             Orbitals-Recomp-Memcpy-Fix-Candidate.zip
             orbitalgame.dll.patch-report.txt
