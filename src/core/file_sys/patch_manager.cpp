@@ -1724,10 +1724,28 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
         }
     }
 
+    const auto input_mode = Settings::values.ocarina_render_input.GetValue();
+    const auto selected_scale = Settings::values.ocarina_render_scale.GetValue();
+    const bool custom_legacy_scale = input_mode == Settings::OcarinaRenderInput::Legacy &&
+        (selected_scale == Settings::OcarinaRenderScale::Scale625 ||
+         selected_scale == Settings::OcarinaRenderScale::Scale375 ||
+         selected_scale == Settings::OcarinaRenderScale::ScaleCustom);
     if (title_id == 0x0400486024DEC000ULL && name == "main" && max_resolution_applied &&
-        Settings::values.ocarina_render_input.GetValue() !=
-            Settings::OcarinaRenderInput::Legacy) {
-        const auto input = Settings::OcarinaRenderInputResolution();
+        (input_mode != Settings::OcarinaRenderInput::Legacy || custom_legacy_scale)) {
+        Settings::OcarinaResolution input{};
+        if (input_mode != Settings::OcarinaRenderInput::Legacy) {
+            input = Settings::OcarinaRenderInputResolution();
+        } else {
+            switch (selected_scale) {
+            case Settings::OcarinaRenderScale::Scale625: input = {1600, 900}; break;
+            case Settings::OcarinaRenderScale::Scale375: input = {960, 540}; break;
+            case Settings::OcarinaRenderScale::ScaleCustom:
+                input = Settings::OcarinaCustomRenderInputResolution(
+                    Settings::values.ocarina_custom_input_width.GetValue());
+                break;
+            default: break;
+            }
+        }
         const f32 scale = std::clamp(static_cast<f32>(input.width) / 2560.0f, 0.25f, 1.0f);
         const u32 scale_bits = std::bit_cast<u32>(scale);
         const u32 top16 = scale_bits >> 16;

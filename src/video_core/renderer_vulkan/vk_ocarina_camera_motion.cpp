@@ -774,12 +774,20 @@ struct OcarinaUpscaler::Impl {
         fsr = std::make_unique<Fsr3Upscaler>(device, scheduler, allocator, staging, pool_, queue,
                                            Fsr3Upscaler::Profile::OcarinaLdr);
         if (backend == VideoCommon::OcarinaUpscaleBackend::Xess) {
-            xess = std::make_unique<XessUpscaler>(device, scheduler, allocator,
-                                                  Settings::values.xess_quality.GetValue());
-            xess_color_pass = std::make_unique<OcarinaColorPass>(
-                device, scheduler, pool_, OCARINA_XESS_COLOR_COMP_SPV);
-            xess_output_pass = std::make_unique<OcarinaColorPass>(
-                device, scheduler, pool_, OCARINA_XESS_OUTPUT_COMP_SPV);
+            try {
+                auto new_xess = std::make_unique<XessUpscaler>(
+                    device, scheduler, allocator, Settings::values.xess_quality.GetValue());
+                auto new_color_pass = std::make_unique<OcarinaColorPass>(
+                    device, scheduler, pool_, OCARINA_XESS_COLOR_COMP_SPV);
+                auto new_output_pass = std::make_unique<OcarinaColorPass>(
+                    device, scheduler, pool_, OCARINA_XESS_OUTPUT_COMP_SPV);
+                xess = std::move(new_xess);
+                xess_color_pass = std::move(new_color_pass);
+                xess_output_pass = std::move(new_output_pass);
+            } catch (const vk::Exception& error) {
+                LOG_WARNING(Render_Vulkan, "Ocarina XeSS unavailable ({}); using FSR 3.1",
+                            error.what());
+            }
         }
     }
 
@@ -912,6 +920,10 @@ VkExtent2D OcarinaUpscaler::XessOutputExtent() const {
 
 bool OcarinaUpscaler::UsedXeSS() const {
     return impl->output_xess;
+}
+
+bool OcarinaUpscaler::RejectsInput(VkExtent2D input_size, VkExtent2D output_size) const {
+    return impl->xess && impl->xess->RejectsInput(input_size, output_size);
 }
 
 void OcarinaUpscaler::SaveSceneReference(VkImageView color) {
@@ -1093,7 +1105,8 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
     state.queue.AddImage(*resources.color_view);
     state.color_pass.Record(state.scheduler, state.queue.UpdateData(), *resources.color, extent);
     bool xess_color_ready = false;
-    if (xess_eligible && state.xess_color_pass && state.xess && !state.xess->Failed()) {
+    if (xess_eligible && state.xess_color_pass && state.xess && !state.xess->Failed() &&
+        !state.xess->RejectsInput(extent, output_extent)) {
         try {
             if (!resources.xess_color || !resources.xess_color_view) {
                 resources.xess_color_view = {};

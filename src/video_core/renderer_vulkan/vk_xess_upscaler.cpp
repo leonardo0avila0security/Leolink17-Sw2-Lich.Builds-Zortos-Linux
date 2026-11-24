@@ -326,7 +326,12 @@ struct XessUpscaler::Impl {
                    XESS_RESULT_SUCCESS;
         };
         if (!query_configuration(sdk_quality)) {
-            Fail("could not determine the selected quality mode's input range");
+            LogFallback(input_size, output_extent, aa, use_intermediate, xess_extent, optimal,
+                        minimum, maximum,
+                        "could not determine the selected quality mode's input range");
+            rejected_input_size = input_size;
+            rejected_output_size = output_extent;
+            initialization_scheduled.store(false, std::memory_order_release);
             return;
         }
         const auto input_fits = [&] {
@@ -449,30 +454,32 @@ struct XessUpscaler::Impl {
             history_reset_pending.exchange(false, std::memory_order_acq_rel);
         const VkImage target_image = intermediate_output ? *intermediate_image : *output_image;
         const VkImageView target_view = intermediate_output ? *intermediate_view : *output_view;
-        const bool target_initialized = intermediate_output
-            ? intermediate_initialized.load(std::memory_order_relaxed)
-            : output_initialized.load(std::memory_order_relaxed);
         constexpr VkAccessFlags WRITES = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                                          VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
                                          VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-        const std::array<VkImageMemoryBarrier, 4> to_read{
-            Barrier(inputs.color_image, Range(VK_IMAGE_ASPECT_COLOR_BIT), WRITES,
-                    VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-            Barrier(inputs.motion_image, Range(VK_IMAGE_ASPECT_COLOR_BIT), WRITES,
-                    VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-            Barrier(inputs.depth_image, Range(VK_IMAGE_ASPECT_DEPTH_BIT), WRITES,
-                    VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-            Barrier(target_image, COLOR_RANGE,
-                    target_initialized ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT : 0,
-                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-                    target_initialized ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
-                    VK_IMAGE_LAYOUT_GENERAL),
-        };
-        scheduler.Record([this, api, inputs, to_read, reset_history, target_image,
-                  target_view](vk::CommandBuffer cmdbuf) {
+        scheduler.Record([this, api, inputs, reset_history, target_image,
+                          target_view](vk::CommandBuffer cmdbuf) {
+            const bool target_initialized = intermediate_output
+                ? intermediate_initialized.load(std::memory_order_relaxed)
+                : output_initialized.load(std::memory_order_relaxed);
+            const std::array<VkImageMemoryBarrier, 4> to_read{
+                Barrier(inputs.color_image, Range(VK_IMAGE_ASPECT_COLOR_BIT), WRITES,
+                        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                Barrier(inputs.motion_image, Range(VK_IMAGE_ASPECT_COLOR_BIT), WRITES,
+                        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                Barrier(inputs.depth_image, Range(VK_IMAGE_ASPECT_DEPTH_BIT), WRITES,
+                        VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                Barrier(target_image, COLOR_RANGE,
+                        target_initialized
+                            ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT
+                            : 0,
+                        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                        target_initialized ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                        VK_IMAGE_LAYOUT_GENERAL),
+            };
             cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, {}, {}, to_read);
             const VkExtent2D color_size = inputs.render_size;
@@ -685,6 +692,21 @@ bool XessUpscaler::IsSupported(const Device& device) {
 
 bool XessUpscaler::Failed() const noexcept {
     return impl->failed.load(std::memory_order_acquire);
+}
+
+bool XessUpscaler::RejectsInput(VkExtent2D input_size, VkExtent2D output_size) const noexcept {
+#ifdef _WIN32
+    const Impl& state = *impl;
+    return !state.initialization_scheduled.load(std::memory_order_acquire) &&
+           state.rejected_input_size.width == input_size.width &&
+           state.rejected_input_size.height == input_size.height &&
+           state.rejected_output_size.width == output_size.width &&
+           state.rejected_output_size.height == output_size.height;
+#else
+    (void)input_size;
+    (void)output_size;
+    return false;
+#endif
 }
 
 VkExtent2D XessUpscaler::OutputExtent() const noexcept {

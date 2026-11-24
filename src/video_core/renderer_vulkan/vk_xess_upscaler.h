@@ -42,6 +42,7 @@ public:
 
     [[nodiscard]] static bool IsSupported(const Device& device);
     [[nodiscard]] bool Failed() const noexcept;
+    [[nodiscard]] bool RejectsInput(VkExtent2D input_size, VkExtent2D output_size) const noexcept;
     [[nodiscard]] VkExtent2D OutputExtent() const noexcept;
     /// True means XeSS evaluation was queued, not completed. Deferred consumers must retain and
     /// check execution_failed because the worker may fail after this call returns.

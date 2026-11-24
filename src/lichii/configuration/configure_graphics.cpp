@@ -582,9 +582,15 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
             qobject_cast<QLabel*>(ocarina_preset_widget)->setText(
                 tr("Matching XeSS preset: %1").arg(QString::fromLatin1(preset)));
         }
-        const bool custom_input = ocarina_render_input_combobox != nullptr &&
-            ocarina_render_input_combobox->currentData().toUInt() ==
-                static_cast<u32>(Settings::OcarinaRenderInput::Custom);
+        const bool custom_legacy_scale = input_mode == Settings::OcarinaRenderInput::Legacy &&
+            ocarina_render_scale_combobox != nullptr &&
+            ocarina_render_scale_combobox->currentData().toUInt() ==
+                static_cast<u32>(Settings::OcarinaRenderScale::ScaleCustom);
+        const bool custom_input =
+            (ocarina_render_input_combobox != nullptr &&
+             ocarina_render_input_combobox->currentData().toUInt() ==
+                 static_cast<u32>(Settings::OcarinaRenderInput::Custom)) ||
+            custom_legacy_scale;
         const bool custom_output = ocarina_upscale_output_combobox != nullptr &&
             ocarina_upscale_output_combobox->currentData().toUInt() ==
                 static_cast<u32>(Settings::OcarinaUpscaleOutput::Custom);
@@ -609,7 +615,15 @@ void ConfigureGraphics::Setup(const ConfigurationShared::Builder& builder) {
         connect(ocarina_xess_checkbox, &QCheckBox::toggled, this,
                 [update_ocarina_details](bool) { update_ocarina_details(); });
     }
+    if (nvidia_dlss_checkbox != nullptr) {
+        connect(nvidia_dlss_checkbox, &QCheckBox::toggled, this,
+                [update_ocarina_details](bool) { update_ocarina_details(); });
+    }
     if (ocarina_render_input_combobox != nullptr) {
+        ocarina_render_input_combobox->setEnabled(!system.IsPoweredOn());
+        apply_funcs.push_back([input_combobox = ocarina_render_input_combobox](bool powered_on) {
+            input_combobox->setEnabled(!powered_on);
+        });
         connect(ocarina_render_input_combobox, &QComboBox::currentIndexChanged,
                 this, [update_ocarina_details](int) { update_ocarina_details(); });
     }

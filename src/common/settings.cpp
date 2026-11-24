@@ -152,8 +152,15 @@ OcarinaResolution OcarinaRenderInputResolution() {
             return {2276, 1280};
         case OcarinaRenderScale::Scale75:
             return {1920, 1080};
+        case OcarinaRenderScale::Scale625:
+            return {1600, 900};
         case OcarinaRenderScale::Scale50:
             return {1280, 720};
+        case OcarinaRenderScale::Scale375:
+            return {960, 540};
+        case OcarinaRenderScale::ScaleCustom:
+            return OcarinaCustomRenderInputResolution(
+                values.ocarina_custom_input_width.GetValue());
         case OcarinaRenderScale::Scale100:
         case OcarinaRenderScale::Automatic:
         default:

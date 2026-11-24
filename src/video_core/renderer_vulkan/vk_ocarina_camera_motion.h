@@ -46,6 +46,7 @@ public:
     [[nodiscard]] std::shared_ptr<std::atomic<bool>> EvaluationFailureFlag() const;
     [[nodiscard]] VkExtent2D XessOutputExtent() const;
     [[nodiscard]] bool UsedXeSS() const;
+    [[nodiscard]] bool RejectsInput(VkExtent2D input_size, VkExtent2D output_size) const;
     /// Save the 1440p temporal scene copy before the game adds its HUD.
     void SaveSceneReference(VkImageView color);
     /// Composite the HUD from the guest image over the temporal output at display size.
