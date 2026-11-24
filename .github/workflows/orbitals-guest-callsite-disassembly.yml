@@ -1,0 +1,54 @@
+name: orbitals-guest-callsite-disassembly
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-guest-callsite-disassembly.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  disassemble-guest-callsite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout analysis tools
+        uses: actions/checkout@v4
+      - name: Download matching exefs main
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output exefs.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/exefs.zip"
+          python - <<'PY'
+          from zipfile import ZipFile
+          from pathlib import Path
+          z=ZipFile("exefs.zip")
+          data=z.read("exefs/main")
+          Path("exefs").mkdir(exist_ok=True)
+          Path("exefs/main").write_bytes(data)
+          print("exefs/main bytes:",len(data))
+          PY
+      - name: Disassemble exact guest call chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check capstone
+          python tools/nx2/recomp/disasm_fn.py exefs \
+            main+0x1759b20 \
+            main+0x175a130 \
+            main+0x70c1de0 \
+            main+0x70c1df0 \
+            --count 220 --out guest-callchain.txt
+          cat guest-callchain.txt
+      - name: Upload guest disassembly
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-guest-callchain-disassembly
+          path: guest-callchain.txt
+          if-no-files-found: error
+          retention-days: 14
