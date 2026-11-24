@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Reconstruct the guest x27 table entry and the d0 load feeding memcpy size."""
+import mmap,struct,sys
+
+def parse(f):
+    f.seek(0,2); size=f.tell(); f.seek(0)
+    if f.read(4)!=b"MDMP": raise ValueError("not MDMP")
+    f.seek(8); n=struct.unpack("<I",f.read(4))[0]; drva=struct.unpack("<I",f.read(4))[0]
+    streams={}
+    for i in range(n):
+        f.seek(drva+i*12); typ,sz,rva=struct.unpack("<III",f.read(12)); streams[typ]=(sz,rva)
+    ranges=[]
+    if 9 in streams:
+        sz,rva=streams[9]; f.seek(rva); count,cur=struct.unpack("<QQ",f.read(16))
+        for _ in range(count):
+            va,length=struct.unpack("<QQ",f.read(16)); ranges.append((va,length,cur));cur+=length
+    if 5 in streams:
+        sz,rva=streams[5]; f.seek(rva); count=struct.unpack("<I",f.read(4))[0]
+        for _ in range(count):
+            va,length,fo=struct.unpack("<QII",f.read(16))
+            if length:ranges.append((va,length,fo))
+    return sorted(ranges),size
+
+def readv(f,ranges,addr,n):
+    out=bytearray();cur=addr;end=addr+n
+    while cur<end:
+        candidates=[r for r in ranges if r[0]<=cur<r[0]+r[1]]
+        if not candidates:return None
+        s,l,o=max(candidates,key=lambda x:x[0]+x[1])
+        take=min(end,s+l)-cur
+        f.seek(o+cur-s);b=f.read(take)
+        if len(b)!=take:return None
+        out.extend(b);cur+=take
+    return bytes(out)
+
+def q(data,o): return struct.unpack_from("<Q",data,o)[0]
+def s32(v): return struct.unpack("<i",struct.pack("<I",v&0xffffffff))[0]
+
+def main(path):
+    with open(path,"rb") as f:
+        ranges,fsz=parse(f)
+        print(f"dump_size={fsz:,} memory_ranges={len(ranges)}")
+        x21=0xCE01F2C00
+        x21obj=readv(f,ranges,x21,0x220)
+        print(f"\n[X21 CANDIDATE] {x21:#x} captured={x21obj is not None}")
+        if x21obj:
+            for off in (0xD0,0xD8,0x120,0x158,0x410):
+                print(f"x21+{off:#x} qword={q(x21obj,off) if off+8<=len(x21obj) else 'outside'}")
+        table=0x0E40012810
+        size=0x10000
+        blob=readv(f,ranges,table,size)
+        print(f"\n[TABLE] base={table:#x} requested={size:#x} captured={0 if blob is None else len(blob):#x} stride=0xE8")
+        matches=[]
+        if blob:
+            for idx in range(min(0x10000//0xE8,256)):
+                off=idx*0xE8
+                if off+0xE0>len(blob):break
+                ptr=q(blob,off+0xD0)
+                raw=q(blob,off+0xD8)
+                count=s32(raw)
+                base=ptr if ptr else table+off+0x10
+                x8=(base+(count<<6))&0xffffffffffffffff
+                load_addr=(x8-8)&0xffffffffffffffff
+                loaded=readv(f,ranges,load_addr,8)
+                val=q(loaded,0) if loaded else None
+                if ptr or raw:
+                    print(f"idx={idx:3d} x27={table+off:#x} +D0={ptr:#x} +D8raw={raw:#018x} s32={count} base={base:#x} x8-8={load_addr:#x} d0={('unmapped' if val is None else hex(val))}")
+                if val is not None and (val&0xffffffff)==0x01490140:
+                    matches.append((idx,table+off,ptr,raw,base,x8,load_addr,val))
+        print(f"\nMATCHES_LOW32_01490140={len(matches)}")
+        for x in matches: print("MATCH "+ " ".join(hex(v) if isinstance(v,int) else str(v) for v in x))
+        for label,addr,n in (("source_stack_object",0x11C51F8A8,0x200),("string_object",0x11C51F6F0,0x100),("x21_preceding",x21-0x200,0x420)):
+            data=readv(f,ranges,addr,n)
+            print(f"\n[{label}] {addr:#x} captured={data is not None} length={0 if data is None else len(data):#x}")
+            if data:
+                for off in range(0,len(data)-7,8):
+                    v=q(data,off)
+                    if off<0x100 or v in (0x01460149013D0140,0x0000000001490140,0x11C51F8A8,0xCE01F2C00):
+                        print(f"+{off:03x} {v:016x}")
+if __name__=="__main__":
+    if len(sys.argv)!=2: raise SystemExit("usage: probe_orbitals_guest_table.py dump.dmp")
+    main(sys.argv[1])
