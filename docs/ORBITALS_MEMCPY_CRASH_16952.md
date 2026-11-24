@@ -732,3 +732,49 @@ Les clés associées aux shaders explicitement signalés sans SPIR-V incluent :
 4. Reproduire avec une capture GPU ciblée avant de modifier le replay Vulkan, les barrières, les shaders ou le code guest.
 
 **Statut : crash toujours présent.** Le candidat a franchi les étapes de démarrage et a atteint la frame 8582, mais il n'est pas stable. Le crash observé dans ce journal est un GPU device lost pendant le rendu ; sa cause racine n'est pas encore identifiée. Ne pas attribuer ce device lost aux shaders manquants sans corrélation des clés et reproduction. Ne pas déclarer le correctif memcpy validé sur la seule base de ce journal.
+
+
+## Nouveau journal uploadé `orbitals(1).log` — runtime `0.2.0-g50f4ec8` — 25 novembre 2026
+
+### Limite importante : le journal ne contient pas la fin du crash
+
+Le fichier analysé fait 4 070 902 octets et 58 957 lignes. Il se termine sur une allocation mémoire, après le message de la ligne 58 871 indiquant que deux programmes supplémentaires ont été rencontrés sans SPIR-V et que leur traduction démarre en arrière-plan.
+
+Il ne contient aucun `FATAL`, `VK_ERROR_DEVICE_LOST`, GPU device fault, exception Windows, access violation ou rapport final de crash. Il est donc impossible d'assigner la cause racine du crash à partir de ce fichier seul. Ne pas confondre cette capture incomplète avec le précédent journal qui contenait un `VK_ERROR_DEVICE_LOST`.
+
+### Configuration et progression observées
+
+- Runtime : `0.2.0-g50f4ec8`.
+- GPU : NVIDIA RTX 4080, pilote 616.92, Vulkan 1.4.351.
+- Fenêtre et swapchain : `3840x2160` (4K), format Vulkan 44.
+- Breadcrumbs GPU activés.
+- Préparation des pipelines : 615 construits, 0 échec ; 70 entrées abandonnées car un shader n'était pas chargé.
+- `ListFrameHistory #4096` indique un frame ID le plus récent de 1006 à cet instant.
+- Census des files NVN : 0 attente d'événement et 0 événement non satisfait dans l'ordre de soumission ; 3000 polls SyncWait, aucun fence observé comme non terminé et aucun poll bloqué.
+- Census mémoire à frame 600 : 551,2 MiB de pools importés ; 0 pool physique et 0 pool virtuel dans ce census. Le rapport miroir indique 0 pool non suivi, 0 chevauchement et 0 échec. Aucun OOM n'est signalé dans le journal.
+
+Ces mesures ne démontrent ni un manque de VRAM ni un blocage de file GPU.
+
+### Correction des observations shaders pour CE lancement
+
+- Programme 685 : geometry stage de 1024 octets, indiqué comme exécuté sur ses dessins triangulaires.
+- Programme 757 : même indication ; il ne faut donc pas les classer comme geometry stages manquants dans ce journal.
+- Programme 6521 : stage 1 sans SPIR-V préparé ; les dessins qui l'utilisent sont ignorés.
+- La traduction automatique produit 837 fichiers SPIR-V et se termine avec `exit 0`.
+- Plus tard, le hash `e2d9a1f0ae64786977235748ae8325a10d2e4b26514ab3eb1df3dca25cf9fdd4` est rencontré sans SPIR-V préparé ; le programme 11909 est toutefois indiqué avec un geometry stage exécuté sur ses dessins triangulaires.
+- La dernière ligne shader indique deux programmes rencontrés sans SPIR-V et le démarrage d'une nouvelle traduction ; aucun résultat de cette traduction n'est présent avant la fin du fichier.
+
+Le code 0 du traducteur ne signifie pas que tous les programmes rencontrés ensuite possèdent déjà un SPIR-V au moment de leur première utilisation.
+
+### Nouvelle piste de test : arguments des dessins indirects et retard du replay
+
+- Le journal contient un appel à `nvnCommandBufferDrawElementsIndirect` depuis `main+0x157f42c`.
+- Le réglage est explicitement journalisé comme `indirect arguments as at the game's submit off (ORBITALS_IND_SNAP)` : le snapshot des arguments indirects est désactivé dans ce run.
+- Le replay asynchrone est actif. Le code de `runtime/gfx/vk/exec/vk_exec_ops.c` documente que le replay peut avoir environ trois soumissions de retard ; le jeu peut alors avoir réécrit à la même adresse les arguments du frame suivant. Le commentaire décrit un cas déjà observé où un arbre a utilisé le nombre d'instances et les matrices/matériaux d'autres arbres.
+- `ORBITALS_IND_SNAP=1` fait utiliser, pour les dessins indirects sans count et quand aucune écriture GPU non recopiée n'est en attente, la copie des arguments prise à la soumission du jeu. C'est un test A/B de synchronisation des arguments, pas un correctif de crash déjà démontré.
+
+**Prochain test ciblé, sans rebuild ni préparation du jeu :** ajouter uniquement `IND_SNAP=1` à `orbitals.ini` (le runtime accepte les noms de réglage sans le préfixe `ORBITALS_`), relancer dans la même scène et vérifier que le journal indique `on`. Ne modifier ni résolution ni autres réglages pendant ce test. Si les crashs disparaissent sur plusieurs lancements, la course entre replay asynchrone et réécriture des arguments indirects devient une piste forte. Si le crash persiste, capturer les arguments et buffers GPU avec `IND_READ=1` et un `IND_HASH` limité aux frames autour du blocage, puis fournir le journal complet ou le dump Windows correspondant.
+
+### Statut
+
+**Cause du crash non établie avec ce fichier.** Le log ne contient pas le rapport fatal. La piste la plus ciblée que ce run autorise est un test A/B de `IND_SNAP`, car le réglage est off et un appel `DrawElementsIndirect` est enregistré. Les shaders 685 et 757 ne sont pas manquants dans cette capture. Aucun correctif ne doit être déclaré validé.
