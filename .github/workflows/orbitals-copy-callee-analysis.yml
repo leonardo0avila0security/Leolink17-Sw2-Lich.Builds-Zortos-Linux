@@ -1,0 +1,120 @@
+name: orbitals-copy-callee-analysis
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-copy-callee-analysis.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  locate-copy-callee:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download setup-work and extract object files only
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output setup-work.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup-work.zip"
+          python - <<'PY'
+          from zipfile import ZipFile
+          from pathlib import Path
+          z=ZipFile("setup-work.zip")
+          root=Path("all-objects")
+          root.mkdir()
+          count=0
+          total=0
+          for info in z.infolist():
+            name=info.filename
+            if name.startswith("setup-work/obj/") and name.lower().endswith(".o") and not info.is_dir():
+              rel=name.split("setup-work/obj/",1)[1]
+              dst=root/rel
+              dst.parent.mkdir(parents=True,exist_ok=True)
+              data=z.read(info)
+              dst.write_bytes(data)
+              count+=1
+              total+=len(data)
+          print(f"Extracted {count} COFF objects, {total:,} bytes")
+          PY
+          find all-objects -name '*.o' -printf '%p %s bytes\n' | sort > object-inventory.txt
+      - name: Locate exact function definitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y llvm
+          find all-objects -name '*.o' -print0 | xargs -0 llvm-nm --defined-only -A > all-defined-symbols.txt
+          grep -i -E ' [Tt] f_70070c1de0$| [Tt] f_70070c1df0$| [Tt] f_700175053c$| [Tt] f_7001750480$' all-defined-symbols.txt > target-symbols.txt || true
+          cat target-symbols.txt
+          python - <<'PY'
+          from pathlib import Path
+          import re, shutil
+          lines=Path("target-symbols.txt").read_text(errors="replace").splitlines()
+          targets=("f_70070c1de0","f_70070c1df0","f_700175053c","f_7001750480")
+          found={}
+          for line in lines:
+            m=re.match(r"(.+?):\s+[0-9A-Fa-f]+\s+[Tt]\s+(\S+)$",line)
+            if m and m.group(2).lower() in targets:
+              found.setdefault(m.group(2).lower(),m.group(1))
+          Path("target-object-map.txt").write_text("\n".join(f"{k}={v}" for k,v in found.items())+"\n")
+          print("TARGET OBJECT MAP")
+          print(Path("target-object-map.txt").read_text())
+          out=Path("target-objects"); out.mkdir(exist_ok=True)
+          for i,(sym,src) in enumerate(sorted(set((s,p) for s,p in found.items()))):
+            shutil.copy2(src,out/f"{i:02d}_{Path(src).name}")
+          PY
+          {
+            echo "TARGET SYMBOLS"
+            cat target-symbols.txt
+            echo
+            echo "TARGET OBJECT MAP"
+            cat target-object-map.txt
+            echo
+            echo "OBJECT COUNT"
+            wc -l object-inventory.txt
+          } > locate-summary.txt
+      - name: Disassemble target functions and relocations
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target-analysis
+          for obj in target-objects/*.o; do
+            [ -e "$obj" ] || continue
+            base="$(basename "$obj" .o)"
+            llvm-readobj --file-headers --sections --symbols --relocations "$obj" > "target-analysis/$base-readobj.txt"
+            llvm-objdump -d --demangle --no-show-raw-insn "$obj" > "target-analysis/$base-disassembly.txt"
+            llvm-objdump -r --demangle "$obj" > "target-analysis/$base-relocations.txt"
+            for sym in f_70070c1de0 f_70070c1df0 f_7001750480; do
+              llvm-objdump -d --demangle --no-show-raw-insn --disassemble-symbols="$sym" "$obj" > "target-analysis/$base-$sym.txt" || true
+            done
+          done
+          {
+            cat locate-summary.txt
+            for f in target-analysis/*f_70070c1de0.txt target-analysis/*f_70070c1df0.txt target-analysis/*f_7001750480.txt; do
+              [ -e "$f" ] || continue
+              echo
+              echo "===== $f ====="
+              cat "$f"
+            done
+          } > focused-copy-callee-report.txt
+          cat focused-copy-callee-report.txt
+      - name: Upload only matching object analysis
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-copy-callee-analysis
+          path: |
+            locate-summary.txt
+            object-inventory.txt
+            target-symbols.txt
+            target-object-map.txt
+            target-objects/*.o
+            target-analysis/
+            focused-copy-callee-report.txt
+          if-no-files-found: error
+          retention-days: 14
