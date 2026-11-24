@@ -1,0 +1,38 @@
+name: orbitals-crash-callchain
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-crash-callchain.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  callchain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source analysis tools
+        uses: actions/checkout@v4
+        with:
+          repository: sinedgiveaways/pmocer-latibro
+          ref: 50f4ec80d42ae0d81920eaebea22fa5f017dbc2a
+          path: source
+      - name: Download ExeFS
+        run: |
+          curl --fail --location --retry 3 -o exefs.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/exefs.zip"
+          mkdir exefs
+          unzip -q exefs.zip -d exefs
+      - name: Install analysis dependencies
+        run: python -m pip install --disable-pip-version-check numpy lz4 capstone
+      - name: Disassemble the crash caller and its callers
+        run: |
+          python source/tools/analisis/frame_report.py exefs/exefs --func f_7001759b20 --func f_70017508e0 --func f_700174f720 --func f_7001718240 --out crash-callchain.txt
+      - name: Upload call-chain disassembly
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-crash-callchain
+          path: crash-callchain.txt
+          retention-days: 14
