@@ -45,15 +45,13 @@ Le dump montre :
 
 Cela confirme que `0x7020002CD0` est un identifiant/adresse synthétique du runtime et que le chemin hostfn aboutit au helper de copie. Ne pas modifier le chargeur des imports pour ce crash.
 
-## Structure suspecte et valeur -3
+## Structure candidate et valeur -3 : lien causal non confirmé
 
-Le champ `RSI+0xD8` contient le pointeur `0x0CE01F2C00`. L'objet pointé a été extrait dans `descriptor_ptr_0D8_0000000CE01F2C00.bin`. À l'offset `+0xD8` de CET objet, les octets sont :
+Le champ `RSI+0xD8` contient le pointeur `0x0CE01F2C00`. L'objet pointé a été extrait dans `descriptor_ptr_0D8_0000000CE01F2C00.bin`. À l'offset `+0xD8` de cet objet, les octets sont `FD FF FF FF 03 00 00 00` : le premier DWORD signé vaut `-3`, le DWORD adjacent vaut `3`.
 
-```
-FD FF FF FF 03 00 00 00
-```
+Le probe de la table candidate `x21=0x0E40012810` retrouve `x21+0x158=0x0CE01F2C00` et une limite de 10 enregistrements. Pour l'enregistrement 0, `+0xD0=0`, `+0xD8=-3`. En appliquant le calcul guest correspondant avec le fallback `x27+0x10`, on lit actuellement le qword `0x013C013D0139013C` à `0x0CE01F2B48), dont le DWORD bas ne correspond pas à `x25=0x01490140`. Les enregistrements suivants capturés ne correspondent pas non plus.
 
-Le premier DWORD est bien un entier signé `-3` ; le DWORD adjacent vaut `3`. Donc la piste `-3` est réelle et localisée, mais il s'agit d'un champ de l'objet pointé par `RSI+0xD8`, pas du champ `RSI+0xD8` lui-même. Il faut identifier le type/layout de cet objet et retrouver comment ce champ est consommé avant d'en faire la cause du mauvais pointeur source.
+**Conclusion :** `-3` est un champ réel dans un objet candidat, mais les octets actuels ne reproduisent pas la taille observée. Il n'est donc pas démontré que ce `-3` a produit le `0x01490140` de ce crash. Le pointeur/enregistrement utilisé au moment du chargement peut différer de l'état capturé au moment du crash, ou le chemin exact peut être différent. Ne pas patcher ce champ à l'aveugle.
 
 ## Points non démontrés
 
@@ -501,3 +499,17 @@ Pour le record d'index 0, les champs `+0xD0/+0xD8) sont les prochains à vérifi
 puis lecture de 8 octets à `x8-8). Le champ signé `-3) observé à `0x0CE01F2C00+0xD8) devient ainsi particulièrement pertinent : s'il s'agit bien du record sélectionné, il ferait pointer la lecture vers `0x0E40012810-0xC8). Cette relation doit encore être confirmée par le probe qui lit directement cette adresse et les autres records ; elle n'est pas encore une preuve que l'entrée 0 est celle active au crash.
 
 Le nouveau script `tools/nx2/probe_orbitals_size_field.py` teste maintenant les deux candidats à partir des pointeurs effectivement capturés dans le contexte et vérifie les champs de table et le DWORD chargé, sans présumer l'index actif.
+
+
+## Scan du motif exact de la taille
+
+Un scan des plages mémoire capturées retrouve le DWORD `0x01490140` à plusieurs endroits (85 occurrences, plafond de scan 200), dont :
+- `0x11C51F5E8` : local guest `[sp+0x88]` qui alimente `x25`.
+- `0x11C51F708` : huit octets après le début du buffer candidat `0x11C51F700).
+- Le qword invalide `0x01460149013D0140` apparaît à `0x11C51F700), dont les octets sont une séquence de quatre unités 16 bits. Le DWORD à `0x11C51F708` est `0x01490140`.
+
+La proximité est notable : le champ source stale du descripteur est égal au qword à `0x11C51F700`, tandis que le DWORD utilisé pour calculer la taille apparaît à `0x11C51F708`. Cela suggère une confusion avec des données 16 bits/une chaîne, mais le scan trouve de nombreuses occurrences et ne prouve pas que `ldur d0,[x8,#-8]` a lu précisément `0x11C51F708`.
+
+Le prochain probe relève les entrées exactes `x21+0x158 + index*0xE8), le champ `+0xD0/+0xD8), le pointeur `x29-8), l'index `[sp+0xC0]` et la comparaison signée qui décide de la branche. Il doit établir l'adresse effective du chargement qui a produit `0x01490140`.
+
+Rapport de scan : workflow `orbitals-memcpy-size-dword-scan`, run https://github.com/sinedgiveaways/tool/actions/runs/45488518166
