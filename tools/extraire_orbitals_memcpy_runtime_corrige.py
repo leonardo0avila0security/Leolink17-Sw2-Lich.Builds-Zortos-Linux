@@ -285,7 +285,7 @@ def main():
                     target_code = read_virtual(f, ranges, target, 0x600)
                     if target_code:
                         add_file(files, "dispatch2_resolved_target.bin", target_code)
-                        files["dispatch2_resolved_target_addr.txt"] = f"0x{target:016X}\\n".encode("ascii")
+                        files["dispatch2_resolved_target_addr.txt"] = f"0x{target:016X}\n".encode("ascii")
                         report.append("resolved target code: 0x600 octets captured")
                     else:
                         report.append("resolved target code: not captured")
@@ -316,7 +316,7 @@ def main():
                     target_code = read_virtual(f, ranges, entry_target, 0x600)
                     if target_code:
                         add_file(files, "dispatch_slow_resolved_target.bin", target_code)
-                        files["dispatch_slow_resolved_target_addr.txt"] = f"0x{entry_target:016X}\\n".encode("ascii")
+                        files["dispatch_slow_resolved_target_addr.txt"] = f"0x{entry_target:016X}\n".encode("ascii")
                         report.append("resolved hostfn dispatch target: 0x600 octets captured")
                         # The dispatcher target is the hostfn entry; capture its memcpy slot and call wrappers.
                         slot_table_va = exe_base + 0x1A736B0
@@ -333,12 +333,12 @@ def main():
                                 fn_code = read_virtual(f, ranges, slot_fn, 0x500)
                                 if fn_code:
                                     add_file(files, "hostfn_memcpy_slot_function.bin", fn_code)
-                                    files["hostfn_memcpy_slot_function_addr.txt"] = f"0x{slot_fn:016X}\\n".encode("ascii")
+                                    files["hostfn_memcpy_slot_function_addr.txt"] = f"0x{slot_fn:016X}\n".encode("ascii")
                         for helper_name, helper_rva in (("hostfn_nonblocking_call_wrapper", 0x37C20), ("hostfn_blocking_call_wrapper", 0x37C70)):
                             helper_code = read_virtual(f, ranges, exe_base + helper_rva, 0x180)
                             if helper_code:
                                 add_file(files, helper_name + ".bin", helper_code)
-                                files[helper_name + "_addr.txt"] = f"0x{exe_base+helper_rva:016X}\\n".encode("ascii")
+                                files[helper_name + "_addr.txt"] = f"0x{exe_base+helper_rva:016X}\n".encode("ascii")
                     else:
                         report.append("resolved hostfn dispatch target: not captured")
                     found = True
