@@ -66,15 +66,16 @@ def main(path):
     addr=base+idx*0xE8; rec=rv(f,rs,addr,0xE0)
     if rec is None: continue
     d8=u32(rec,0xD8); si=s32(d8)
-    # Guest x9 is loaded from [x21+0x158], not from [x27+0xD0].
-    # csel chooses x27+0x10 only when that array-base pointer is null.
-    chosen=base if base else addr+0x10
+    # x27 is the selected record. Guest x9 is loaded from [x27+0xD0];
+    # csel chooses x27+0x10 only when that per-record pointer is null.
+    d0=u64(rec,0xD0)
+    chosen=d0 if d0 else addr+0x10
     x8=(chosen+(si<<6))&0xffffffffffffffff
     val=rv(f,rs,x8-8,8)
     if val is None: continue
     d=u64(val)
     if (d&0xffffffff)==0x01490140 or idx<3:
-     print(f"record[{idx}]={addr:#x} array_base={base:#x} +D8={d8:#x} signed={si} chosen_base={chosen:#x} x8={x8:#x} [x8-8]={d:#018x}")
+     print(f"record[{idx}]={addr:#x} +D0={d0:#x} +D8={d8:#x} signed={si} chosen_base={chosen:#x} x8={x8:#x} [x8-8]={d:#018x}")
     if (d&0xffffffff)==0x01490140:
      found+=1
      for p in range(0,0xE0,8):
