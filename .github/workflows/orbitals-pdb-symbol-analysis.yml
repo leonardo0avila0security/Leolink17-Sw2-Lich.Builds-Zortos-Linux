@@ -193,6 +193,8 @@ jobs:
                   import_lines.append("DT_JMPREL address not readable from NSO segments")
           else:
               import_lines.append("DT_JMPREL / DT_PLTRELSZ not found; GOT slot names unresolved")
+          md = Cs(CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN)
+          md.detail = True
           for stub in (0x70070C1DE0, 0x70070C1DF0):
               off = stub-0x7000000000-text_mem
               if 0 <= off < len(text):
