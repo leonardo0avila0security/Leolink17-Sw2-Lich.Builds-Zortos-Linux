@@ -685,3 +685,50 @@ Ce paquet contient les deux changements binaires ciblés du correctif combiné :
 Il ne contient pas automatiquement les autres pistes ou correctifs indépendants du projet (TLS, shaders, ni l'objet de correctif Grok `main_main_0184_nullcheck.o`). Ils ne doivent pas être considérés comme intégrés à ce paquet.
 
 **Statut : candidat de test uniquement.** Les contrôles de construction et d'intégrité du paquet ont réussi, mais aucun test de gameplay avec ce DLL n'est encore enregistré. Il faut conserver l'installation précédente et valider le candidat en jeu, notamment lors des transitions et chargements où les crashs apparaissaient. Ne pas déclarer le crash résolu avant cette validation.
+
+
+## Nouveau crash du candidat complet — journal `0.2.0-g50f4ec8` — 24 novembre 2026
+
+Le journal fourni après lancement de `Orbitals-Recomp-Memcpy-Fix-Setup-Candidate` montre un échec différent de l'ancien crash CPU `memcpy`.
+
+### Résultat observé
+
+- Version runtime : `0.2.0-g50f4ec8`.
+- GPU : NVIDIA GeForce RTX 4080, pilote 616.92, Vulkan 1.4.351.
+- Le runtime démarre, initialise les modules et exécute plusieurs milliers de frames.
+- Les breadcrumbs GPU atteignent la frame 8582 en 1920x1080.
+- Le dernier upload batch indiqué (21908, frame 8581) est terminé.
+- Le dernier marqueur terminé est une barrière de la frame 8582 ; le marqueur commencé suivant est un render pass de la frame 8582.
+- Environ 112 851 soumissions/fences ont été émises avant l'échec final.
+- Le journal se termine par `FATAL: vk: upload submit failed (-4)`. En Vulkan, `-4` correspond à `VK_ERROR_DEVICE_LOST`.
+
+### Diagnostic limité par les preuves
+
+Le journal signale un GPU device fault avec 16 adresses et 0 enregistrement fournisseur. Les 16 adresses d'instruction sont reportées comme inconnues, notamment `0x20041d800`, `0x20041ba70` et `0x20041f630`. Les breadcrumbs bornent le hang au travail de rendu de la frame 8582, après la barrière terminée et pendant/après le render pass commencé.
+
+Aucun `VK_ERROR_OUT_OF_DEVICE_MEMORY` n'est indiqué dans la fin du journal. Le dernier rapport mémoire hôte indique 5618 MiB résidents, 9829 MiB privés et 17020/32581 MiB utilisés par le système. Cela ne suffit pas à exclure tout problème mémoire GPU, mais le message fatal observé est `VK_ERROR_DEVICE_LOST`, pas une erreur d'allocation.
+
+Le journal ne contient pas de nouvelle signature d'accès mémoire CPU fatale liée à `memcpy`, ni d'exception d'accès mémoire Windows. `GetTlsValue` apparaît comme un appel SDK ordinaire au démarrage (appel 49, depuis `main+0x4bc64`), sans erreur TLS rapportée dans ce run. Cela ne prouve pas que le correctif memcpy est définitivement validé ; cela montre seulement que cette exécution a progressé jusqu'à une panne GPU distincte.
+
+### Indices shaders observés dans le même run
+
+- Le programme 685 possède un geometry stage de 1024 octets sans SPIR-V préparé ; il n'est pas exécuté.
+- Le programme 757 possède également un geometry stage de 1024 octets sans SPIR-V préparé ; il n'est pas exécuté.
+- Le stage 0 du programme 149 n'a pas de SPIR-V préparé ; les draws correspondants sont ignorés.
+- Le runtime a rencontré jusqu'à 839 programmes sans SPIR-V pendant cette exécution.
+- Les traductions automatiques répétées ont terminé avec le code 0 ; la dernière ligne rapporte 836 fichiers SPIR-V générés dans le dossier `spirv`. Ce code 0 ne prouve pas que tous les shaders utilisés sont disponibles ou corrects.
+- Le journal contient la liste des 64 derniers programmes dessinés/dispatchés sous forme de clés SPIR-V, mais ne donne pas leur nom fonctionnel.
+
+Les clés associées aux shaders explicitement signalés sans SPIR-V incluent :
+- `0c57f1b1e44ae5a06117dea03ba3f7b8ce1567f8a0f2b9db6ee2af1f2c128586`
+- `1a2c207d45373a49c0fbc0f183c31b2f5609b1b15907acb8cbd5cbdea2cabfa9`
+- `4d34c8ddbab0dae913e351145b4d3b25af302619be70a82acb4352c05d1b65fe`
+
+### Prochaine analyse requise
+
+1. Récupérer le dossier `spirv-dump` produit pendant CETTE exécution (pas uniquement l'archive de dump historique), ainsi que le dossier `spirv` et `failed.tsv`.
+2. Relier les clés des 64 derniers programmes aux dumps et aux SPIR-V générés ; identifier le dernier shader/programme effectivement exécuté dans le render pass de la frame 8582.
+3. Examiner les geometry stages des programmes 685 et 757 et le stage 0 du programme 149 pour savoir pourquoi ils n'ont pas de SPIR-V préparé.
+4. Reproduire avec une capture GPU ciblée avant de modifier le replay Vulkan, les barrières, les shaders ou le code guest.
+
+**Statut : crash toujours présent.** Le candidat a franchi les étapes de démarrage et a atteint la frame 8582, mais il n'est pas stable. Le crash observé dans ce journal est un GPU device lost pendant le rendu ; sa cause racine n'est pas encore identifiée. Ne pas attribuer ce device lost aux shaders manquants sans corrélation des clés et reproduction. Ne pas déclarer le correctif memcpy validé sur la seule base de ce journal.
