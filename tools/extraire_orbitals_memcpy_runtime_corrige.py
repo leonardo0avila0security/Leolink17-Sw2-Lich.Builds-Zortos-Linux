@@ -442,6 +442,18 @@ def main():
                                 report.append(f"  pointeur +0x{off:03X} -> 0x{ptr:016X}: 0x180 octets capturés")
                 else:
                     report.append("Bloc RSI : non capturé.")
+            # Capture the guest object used as memcpy destination, plus its array-bearing region.
+            if dst_ptr:
+                for label, addr, length in (
+                    ("copy_destination_object", max(0, dst_ptr-0x100), 0x1200),
+                    ("copy_destination_object_plus_0x100", max(0, dst_ptr+0x100), 0x1200),
+                    ("copy_destination_object_plus_0x158", max(0, dst_ptr+0x158), 0x1000),
+                    ("copy_destination_object_plus_0x400", max(0, dst_ptr+0x400), 0x1000),
+                ):
+                    data = read_virtual(f, ranges, addr, length)
+                    if data:
+                        add_file(files, label+".bin", data)
+                        report.append(f"  {label}: 0x{addr:016X} ({len(data):#x} bytes)")
             if dst_ptr:
                 dest_mem = read_virtual(f, ranges, max(0, dst_ptr-0x80), 0x280)
                 if dest_mem:
