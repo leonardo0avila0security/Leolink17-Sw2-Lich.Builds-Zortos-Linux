@@ -97,10 +97,10 @@ def apply(data):
         raise ValueError(f"PDB mismatch: {guid} age {age}")
 
     checks = (
-        (RBX_LOAD_RVA-0x600, RBX_LOAD_BYTES, "guest SP load"),
+        (RBX_LOAD_RVA-0xC00, RBX_LOAD_BYTES, "guest SP load"),
         (SIZE_PATCH_FILE, SIZE_PATCH_ORIGINAL, "size-local init insertion"),
-        (SIZE_READ_RVA-0x600, SIZE_READ_BYTES, "size-local read"),
-        (SIZE_CONDITIONAL_STORE_RVA-0x600, SIZE_CONDITIONAL_STORE_BYTES, "conditional size-local store"),
+        (SIZE_READ_RVA-0xC00, SIZE_READ_BYTES, "size-local read"),
+        (SIZE_CONDITIONAL_STORE_RVA-0xC00, SIZE_CONDITIONAL_STORE_BYTES, "conditional size-local store"),
         (SOURCE_PATCH_FILE, SOURCE_PATCH_ORIGINAL, "fallback source patch"),
     )
     for off, expected, label in checks:
