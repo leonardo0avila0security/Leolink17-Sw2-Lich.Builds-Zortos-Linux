@@ -295,6 +295,28 @@ jobs:
                               if r["code"] in (0xC0000005,0xC0000006) and len(r["params"]) >= 2:
                                   p(f"    {ACCESS.get(r['params'][0],r['params'][0])} {hx(r['params'][1])}")
                               p(f"    CONTEXT stack+{co:#x} RSP={hx(regs2['rsp'])}")
+
+                          # Decode the real caller at [RSP] for the active memcpy frame.
+                          if stack_data and thread["stack"] <= rsp < thread["stack"]+len(stack_data):
+                              ret = struct.unpack_from("<Q", stack_data, start)[0]
+                              owner = next((m for m in modules if m["base"] <= ret < m["base"]+m["size"]), None)
+                              p(f"\nIMMEDIATE CALLER: return={hx(ret)} ({module_of(ret)})")
+                              if owner:
+                                  code_start = max(owner["base"], ret-0x30)
+                                  code = memread(code_start, min(0x50, owner["base"]+owner["size"]-code_start))
+                                  if code:
+                                      try:
+                                          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+                                          md = Cs(CS_ARCH_X86, CS_MODE_64)
+                                          for ins in md.disasm(code, code_start):
+                                              marker = " <return>" if ins.address == ret else ""
+                                              p(f"  {ins.address:#018x}: {ins.mnemonic:8} {ins.op_str}{marker}")
+                                      except Exception as e:
+                                          p(f"  CALLER DISASSEMBLY ERROR: {e}")
+                              # Show a compact raw memory window for the copy arguments.
+                              for label, addr, length in (("destination", regs["rcx"], 64), ("source", regs["rdx"], 64), ("parameter/object RSI", regs["rsi"], 128)):
+                                  data = memread(addr, length) if user(addr) else b""
+                                  p(f"  {label} {hx(addr)}: " + (data.hex() if data else "not captured / non-canonical"))
               else:
                   p("\nNO EXCEPTION STREAM in this dump")
 
