@@ -1,0 +1,20 @@
+name: inspect-orbitals-setup-archive
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download setup archive
+        run: curl -fL --retry 3 -o setup.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup.zip"
+      - name: List archive structure
+        run: |
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile("setup.zip") as z:
+              for n in z.namelist()[:500]:
+                  i=z.getinfo(n)
+                  print(f"{i.file_size:12} {n}")
+          PY
