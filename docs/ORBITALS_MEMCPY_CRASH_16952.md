@@ -329,7 +329,6 @@ Le champ `-3` est donc localisé dans un objet de données réel, mais sa signif
 
 Le scan étendu a retrouvé cinq références au pointeur `0x0CE01F2C00`, huit à `0x11C51F8A8`, douze à `0x0E40012C10` et quinze à `0x0E40012810`. Aucune référence directe à `0x0CE1682D40` n'est présente dans les plages capturées. Le probe suivant se concentre donc sur les variables locales de pile qui alimentent `x8), `x9) et `x19) dans le chemin fallback.
 
-
 ## Correction de l'interprétation du callsite : chemin fallback
 
 L'analyse complète du désassemblage guest a révélé deux chemins distincts vers l'instruction `memcpy` de retour `main+0x175A130`. L'analyse précédente qui interprétait systématiquement cet appel comme une copie finale de 4 octets ne s'applique qu'au chemin aligné ; ce n'est pas le chemin du dump.
@@ -384,7 +383,7 @@ Le chemin guest exécute :
 **Arguments corrects au point de l'appel fallback :**
 `memcpy(0x12E1A8000C, 0x11C51F8A8, 0x05240500)`.
 
-Le champ `[context+0xD0]` contient lui aussi `0x11C51F8A8), ce qui corrobore la valeur source attendue. Le champ `[context+8]` contient au contraire `0x01460149013D0140), qui est la donnée UTF-16 située à `0x11C51F700), et non le pointeur source. La taille `0x05240500` est correcte ; la destination est correcte ; seul le champ source du descripteur est faux.
+Le champ `[context+0xD0]` contient lui aussi `0x11C51F8A8`, ce qui corrobore la valeur source attendue. Le champ `[context+8]` contient au contraire `0x01460149013D0140`, qui est la donnée UTF-16 située à `0x11C51F700`, et non le pointeur source. La taille `0x05240500` est correcte ; la destination est correcte ; seul le champ source du descripteur est faux.
 
 Cette observation écarte l'hypothèse précédente selon laquelle la source attendue serait `0x0CE1682D40` pour ce crash : cette somme appartient à une autre branche de la fonction, pas au chemin fallback réellement pris.
 
