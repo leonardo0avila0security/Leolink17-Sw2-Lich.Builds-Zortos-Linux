@@ -62,11 +62,11 @@ jobs:
           import zipfile
           z = zipfile.ZipFile("setup-work.zip")
           names = z.namelist()
-          open("setup-work-zip-list.txt","w").write("\\n".join(names)+"\\n")
+          open("setup-work-zip-list.txt","w").write("\n".join(names)+"\n")
           hits = [n for n in names if any(k in n.lower() for k in ("hostfn","dispatch","nvn_api_core","orbitals-recomp.exe","pdb","link.rsp"))]
-          open("setup-work-relevant-files.txt","w").write("\\n".join(hits)+"\\n")
+          open("setup-work-relevant-files.txt","w").write("\n".join(hits)+"\n")
           print("Relevant setup-work entries:")
-          print("\\n".join(hits[:500]))
+          print("\n".join(hits[:500]))
           for n in names:
               low = n.lower()
               if low.endswith(".pdb") and ("orbitals-recomp" in low or "recomp.exe" in low):
