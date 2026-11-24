@@ -1,0 +1,57 @@
+name: orbitals-memcpy-clean-full-build
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-memcpy-clean-full-build.yml"
+      - "tools/nx2/package_orbitals_clean_memcpy_build.py"
+      - "tools/nx2/apply_orbitals_memcpy_size_and_source_patch.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-clean-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the exact existing runtime (no recompilation)
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output orbitals-recomp.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
+
+      - name: Apply the version-locked candidate DLL patches
+        run: |
+          python tools/nx2/apply_orbitals_memcpy_size_and_source_patch.py \
+            orbitals-recomp.zip -o orbitalgame.dll
+
+      - name: Assemble a clean full runtime folder
+        run: |
+          python tools/nx2/package_orbitals_clean_memcpy_build.py
+          mkdir -p clean-folder
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile("Orbitals-Recomp-Memcpy-Fix-Candidate.zip") as z:
+              z.extractall("clean-folder")
+          PY
+          test -f clean-folder/Orbitals-Recomp-Memcpy-Fix-Candidate/README-FIRST.txt
+          test -f clean-folder/Orbitals-Recomp-Memcpy-Fix-Candidate/PATCH-REPORT.txt
+          find clean-folder -maxdepth 4 -type f | head -80
+
+      - name: Upload full clean folder and portable ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: Orbitals-Recomp-Memcpy-Fix-Candidate-CLEAN-FULL-BUILD
+          path: |
+            Orbitals-Recomp-Memcpy-Fix-Candidate.zip
+            clean-folder/
+            orbitalgame.dll.patch-report.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
