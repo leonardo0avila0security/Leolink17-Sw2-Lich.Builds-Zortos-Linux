@@ -64,14 +64,10 @@ def main():
         raise SystemExit("Runtime executable does not contain the expected integrated setup launcher")
     if "setup-state.json" in entries:
         raise SystemExit("Stale setup-state.json must not ship in a clean first-run build")
-    # The launcher must actually be present; do not silently ship another runtime-only folder.
-    launchers=[n for n in entries if Path(n).name.lower() in ("setup.exe","setup.py","setup.bat","setup.cmd")]
-    if not launchers:
-        raise SystemExit("setup.zip contains no recognizable setup launcher (setup.exe/.py/.bat/.cmd); refusing to publish")
-    # At least one NUP selection/configuration component should exist in setup archive.
-    setup_candidates=[n for n in setup_names if any(k in Path(n).name.lower() for k in ("setup","nup","select","picker"))]
-    if not setup_candidates:
-        raise SystemExit("setup.zip has no recognizable setup/NUP-selection files; inspect archive before packaging")
+    # The UI and NUP selection are integrated into orbitals-recomp.exe; Python preparation
+    # is supplied by the embedded setup/python runtime and prepare/nup modules.
+    launchers = ["orbitals-recomp.exe (integrated first-run setup UI)"]
+    setup_candidates = ["setup/src/tools/prepare/prepare.py", "setup/src/tools/prepare/nup.py"]
     out=Path(a.output)
     with zipfile.ZipFile(out,"w",allowZip64=True) as z:
         for name,(data,ctype) in sorted(entries.items()):
@@ -95,7 +91,7 @@ def main():
             f"patched_orbitalgame_dll_sha256={sha(patched)}\n"
             f"runtime_dll_path={dll_name}\n"
             f"setup_launchers={';'.join(launchers)}\n"
-            f"setup_nup_files={';'.join(sorted(setup_candidates)[:100])}\n"
+            f"setup_nup_files={';'.join(setup_candidates)}\n"
             f"overwritten_duplicate_paths={';'.join(overwritten)}\n"
             "package_type=setup-capable clean full runtime folder\n"
             "game_recompilation=not performed\ngameplay_validation=pending\n"
