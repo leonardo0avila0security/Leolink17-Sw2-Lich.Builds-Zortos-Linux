@@ -69,6 +69,28 @@ def main(path):
                 matches.append((idx,rec_addr,raw,base,x8,load_addr,0 if val is None else val))
         print(f"\\nMATCHES_LOW32_01490140={len(matches)}")
         for x in matches: print("MATCH "+ " ".join(hex(v) if isinstance(v,int) else str(v) for v in x))
+        x21_guest=0x0E40012810
+        x27=0xCE01F2C00
+        x21p158_data=readv(f,ranges,x21_guest+0x158,8)
+        x21p158=q(x21p158_data,0) if x21p158_data else None
+        x27d0_data=readv(f,ranges,x27+0xD0,8)
+        x27d8_data=readv(f,ranges,x27+0xD8,8)
+        x27d0=q(x27d0_data,0) if x27d0_data else None
+        x27d8=q(x27d8_data,0) if x27d8_data else None
+        w8=s32(x27d8) if x27d8 is not None else None
+        selected=(x27d0 if x27d0 else x27+0x10) if x27d0 is not None else None
+        x8=((selected+(w8<<6))&0xffffffffffffffff) if selected is not None else None
+        load_addr=((x8-8)&0xffffffffffffffff) if x8 is not None else None
+        loaded=readv(f,ranges,load_addr,8) if load_addr is not None else None
+        d0=q(loaded,0) if loaded else None
+        print("\\n[EXACT GUEST x27 / SIZE LOAD RECONSTRUCTION]")
+        print(f"x21={x21_guest:#x} x21+0x158={None if x21p158 is None else hex(x21p158)}")
+        print(f"x27={x27:#x} index={(x27-x21p158)//0xE8 if x21p158 is not None and x27>=x21p158 else 'base-mismatch'}")
+        print(f"x27+0xD0={None if x27d0 is None else hex(x27d0)} x27+0xD8={None if x27d8 is None else hex(x27d8)} signed_w8={w8}")
+        print(f"selected_base={None if selected is None else hex(selected)} x8={None if x8 is None else hex(x8)} load_d0_at={None if load_addr is None else hex(load_addr)} d0={None if d0 is None else hex(d0)}")
+        if d0 is not None:
+            count=s32(d0)
+            print(f"x25_signed={count:#x} x2_size={(count*4)&0xffffffffffffffff:#x}")
         for label,addr,n in (("source_stack_object",0x11C51F8A8,0x200),("string_object",0x11C51F6F0,0x100),("x21_preceding",x21-0x200,0x420)):
             data=readv(f,ranges,addr,n)
             print(f"\n[{label}] {addr:#x} captured={data is not None} length={0 if data is None else len(data):#x}")
