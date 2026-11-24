@@ -440,3 +440,43 @@ L'origine de cette valeur est également identifiée dans le flot guest :
 La priorité devient de reconstruire le pointeur `x8` et les données à `[x8-8]` à `0x1759E54`, puis de comprendre pourquoi leur DWORD bas vaut `0x01490140`. Il faut vérifier le layout de l'entrée sélectionnée dans la table `x27 = base + w20 * 0xE8` et ne pas supposer que le champ `-3` de `0x0CE01F2C00` est celui de `x27+0xD8` : cette correspondance n'est pas encore établie.
 
 Rapport MemoryInfoList : https://github.com/sinedgiveaways/tool/actions/runs/45484336193
+
+
+## Nouvelle analyse du calcul de taille — 24 novembre, probe du propriétaire du champ
+
+Le désassemblage complet du callsite fournit désormais la chaîne exacte qui produit le DWORD de taille, mais le propriétaire de ce champ n'est pas encore identifié :
+
+```asm
+main+0x1759DE4: ldr x9, [x27, #0xD0]
+main+0x1759E18: add x25, x27, #0x10
+main+0x1759E1C: sxtw x8, w8
+main+0x1759E24: cmp x9, #0
+main+0x1759E28: csel x9, x25, x9, eq
+main+0x1759E2C: add x8, x9, x8, lsl #6
+...
+main+0x1759E54: ldur d0, [x8, #-8]
+main+0x1759E58: str d0, [sp, #0x88]
+main+0x1759E5C: stur d8, [x8, #-8]
+...
+main+0x1759F4C: ldrsw x25, [sp, #0x88]
+main+0x1759F7C: lsl x2, x25, #2
+```
+
+Faits supplémentaires directement visibles dans le snapshot :
+- le frame guest commence à `0x11C51F680` et le frame actif est `0x11C51F560` après la réservation de `0x120) octets ;
+- les locals sauvegardés à `SP+0x80) et `SP+0x88) valent respectivement `0x11C51F8A8) et `0x01490140) ;
+- `SP+0x90) et `SP+0x98) contiennent tous deux `0x0E40012C10), tandis que `SP+0xA8=4), `SP+0xB0=3), et `SP+0xB8=0x0E40012C20) ;
+- le contexte host conserve aussi `+0x98=0x0E40012C10) et `+0xA8=0x0E40012810). Ces valeurs sont des candidats de pointeurs d'objet, mais leur rôle exact et leur correspondance avec le registre courant `x21) doivent être validés par les accès mémoire, pas supposés.
+
+Point important : `ldur d0, [x8,#-8]) est immédiatement suivi de `stur d8, [x8,#-8]). La fonction lit donc 8 octets du champ puis le remplace avec `d8) avant de continuer. Il faut distinguer la valeur d'entrée consommée pour le calcul de taille de la valeur écrite ensuite ; une capture mémoire après l'instruction ne permet pas, à elle seule, de déduire la valeur pré-écriture.
+
+Un nouveau probe en lecture seule a été ajouté :
+- `tools/nx2/probe_orbitals_size_field.py`
+- le workflow `orbitals-guest-memcpy-size-origin` exécute maintenant ce probe en plus de l'ancien scan ;
+- il teste les pointeurs candidats présents dans le contexte, suit `+0x158/+0x160) seulement lorsqu'ils sont capturés, puis scanne les enregistrements au stride `0xE8) à la recherche du DWORD bas `0x01490140). Il ne suppose plus que le x21 sauvegardé dans le prologue est le x21 courant (c'était le registre du caller).
+
+Commits :
+- probe : `6b8e9cbef1be07dabc972a1080f4139b95873bf5`
+- workflow ciblé : `d26166be0337fbbe92887dd459e4707c4d3cd181`
+
+**État : analyse en cours.** Le probe doit encore produire son artefact avant de conclure sur l'objet propriétaire, l'index d'enregistrement ou la cause de la valeur `0x01490140`. Aucun correctif de taille n'est proposé à ce stade. Le patch de marshalling de source reste un correctif partiel non jouable tant que la taille n'est pas comprise.
