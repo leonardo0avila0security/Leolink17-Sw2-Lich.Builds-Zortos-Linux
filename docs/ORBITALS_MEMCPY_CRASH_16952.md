@@ -170,3 +170,16 @@ La preuve la plus forte à ce stade n'est pas une faute de l'implémentation de 
 Artefacts :
 - scan des définitions des wrappers `f_70070c1de0` / `f_70070c1df0` dans les 832 objets compilés : https://github.com/sinedgiveaways/tool/actions/runs/45465324639
 - désassemblage AArch64 du callsite exact et des stubs PLT : https://github.com/sinedgiveaways/tool/actions/runs/45465692468
+
+
+## Correction de provenance du pointeur source
+
+Précision importante : l'adresse `0x11C51F700` est l'endroit où le qword invalide est présent comme DONNÉE. Ce n'est pas encore l'adresse source attendue par le code guest ; il ne faut pas traiter ce buffer comme la destination de la correction.
+
+Le code hôte généré pour le deuxième appel à `memcpy` calcule le champ source à partir des champs du contexte :
+`source = [context+0xD8] + [context+0xC8]`.
+Dans le dump, ces champs valent respectivement `0x0CE01F2C00` et `0x01490140`. L'adresse source attendue selon cette instruction est donc `0x0CE16E2D40`, sous réserve que le contexte observé soit bien celui consommé par le helper (le PC `+0xF0=0x700175A130` et la pile soutiennent cette association).
+
+Le helper reçoit à la place `0x01460149013D0140`, qui est le contenu trouvé à `0x11C51F700`. Le désaccord est donc encore plus précis : le champ source ne contient ni le pointeur attendu `0x0CE16E2D40`, ni l'adresse du buffer où son contenu a été retrouvé ; il contient les octets de données eux-mêmes. Le workflow `orbitals-memcpy-context-probe` vérifie maintenant si `0x0CE16E2D40` est présent dans les plages mémoire du dump et si le descripteur `0x1C92EAB0540` est référencé depuis les piles d'autres threads.
+
+Le `setup-state.json` inclus dans la release indique le port `0.2.0-g50f4ec8`. Les conclusions de code machine de cette note se rapportent donc aux assets de cette release précise ; ne pas les transposer automatiquement au runtime `0.2.0-g84b2e62` sans vérifier que le dump et ses objets compilés correspondent à ce dernier.
