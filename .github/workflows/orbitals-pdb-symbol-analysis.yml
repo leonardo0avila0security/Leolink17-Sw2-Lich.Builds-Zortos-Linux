@@ -1,0 +1,68 @@
+name: orbitals-pdb-symbol-analysis
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-pdb-symbol-analysis.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  symbols:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download exact build package
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output orbitals-recomp.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
+          echo "f492332de899aa9799ecdf0be4fa55ae7856ad5d7a098aa12f6d2afa8c95d128  orbitals-recomp.zip" | sha256sum --check
+          unzip -p orbitals-recomp.zip orbitalgame.dll.pdb > orbitalgame.dll.pdb
+          ls -lh orbitalgame.dll.pdb
+
+      - name: Install LLVM PDB reader
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+
+      - name: Verify PDB identity and extract symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v llvm-pdbutil
+          llvm-pdbutil dump --summary orbitalgame.dll.pdb > pdb-summary.txt
+          llvm-pdbutil dump --publics --load-address=0x7FFA44970000 orbitalgame.dll.pdb > pdb-publics.txt
+          llvm-pdbutil dump --globals --load-address=0x7FFA44970000 orbitalgame.dll.pdb > pdb-globals.txt
+          llvm-pdbutil dump --modules --files orbitalgame.dll.pdb > pdb-modules.txt
+          {
+            echo "=== PDB SUMMARY ==="
+            cat pdb-summary.txt
+            echo
+            echo "=== TARGET ADDRESS SEARCH: DLL RVA 0x1B5A9300 / 0x1C11DF00 ==="
+            grep -iE "1B5A[0-9A-F]{4}|1C11D[0-9A-F]{3}" pdb-publics.txt pdb-globals.txt || true
+            echo
+            echo "=== RELEVANT MODULES / COMPILANDS ==="
+            grep -iE "main_main|main\.cpp|orbitalgame|recomp" pdb-modules.txt | head -300 || true
+          } > pdb-target-analysis.txt
+          wc -l pdb-publics.txt pdb-globals.txt pdb-modules.txt
+          cat pdb-target-analysis.txt
+
+      - name: Upload PDB symbol reports
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-pdb-symbol-analysis
+          path: |
+            pdb-summary.txt
+            pdb-publics.txt
+            pdb-globals.txt
+            pdb-modules.txt
+            pdb-target-analysis.txt
+          if-no-files-found: error
+          retention-days: 14
