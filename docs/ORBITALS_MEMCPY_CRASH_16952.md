@@ -644,3 +644,44 @@ Hashes :
 - DLL patché : `b0f31b26d16f433b0a4a9767d5237d0eb487ff177deb8b56458029a065106e41`
 
 **Validation actuelle :** création du patch et vérification des octets/branches/trampolines réussies dans GitHub Actions. Le DLL n'a pas encore été lancé dans le jeu : ce patch est un candidat à tester, pas une correction gameplay certifiée. Il ne faut pas déclarer le crash résolu avant un test du jeu, plusieurs démarrages et une traversée des transitions où les crashes se produisaient. Aucune préparation, régénération ou recompilation du jeu n'a été exécutée.
+
+
+
+## Paquet complet de test avec les deux correctifs memcpy — 24 novembre 2026
+
+Le workflow `orbitals-memcpy-clean-full-build` a assemblé un dossier complet de test à partir de l'archive de setup d'origine et du runtime existant, en remplaçant uniquement `orbitalgame.dll` par le DLL patché décrit ci-dessus.
+
+- Script d'assemblage : `tools/nx2/package_orbitals_clean_memcpy_build.py`
+- Workflow : `.github/workflows/orbitals-memcpy-clean-full-build.yml`
+- Branche : `analysis/recomp-build`
+- Commit utilisé par le run : `0bb8ded114dfc5271ffbda8d6f744139e1f3a17d`
+- Run GitHub Actions : https://github.com/sinedgiveaways/tool/actions/runs/45502043994
+- Artefact : https://github.com/sinedgiveaways/tool/actions/runs/45502043994/artifacts/14969279550
+- Nom de l'artefact : `Orbitals-Recomp-Memcpy-Fix-Setup-Candidate-CLEAN-FULL-BUILD`
+- Expiration de l'artefact : 24 décembre 2026
+- Archive ZIP produite : `Orbitals-Recomp-Memcpy-Fix-Setup-Candidate.zip`
+- Taille de l'archive ZIP produite : 386 103 672 octets
+- SHA-256 de l'archive ZIP produite : `4610078f6c61e8983ff397580e02e874b1f3f1f8a700f266035e2a9dddc1c4fb`
+- SHA-256 du DLL patché inclus : `b0f31b26d16f433b0a4a9767d5237d0eb487ff177deb8b56458029a065106e41`
+
+### Vérifications du paquet
+
+Le run a terminé avec `PACKAGE_OK=1` et a vérifié :
+- CRC de l'archive ZIP ;
+- présence du lanceur intégré `orbitals-recomp.exe` ;
+- présence de l'environnement Python embarqué `setup/python/python.exe` et des scripts `prepare.py` et `nup.py` ;
+- présence du rapport `PATCH-REPORT.txt` ;
+- correspondance octet par octet entre le DLL du paquet et le DLL patché produit par le patcher ;
+- absence de `setup-state.json`, afin de ne pas réutiliser le chemin absolu du fichier NUP du développeur.
+
+Le paquet conserve le lanceur et le flux de première installation : il est prévu pour être extrait dans un nouveau dossier vide, puis lancé afin de sélectionner le fichier NUP de l'utilisateur. La préparation initiale du jeu peut être nécessaire sur cette première installation ; en revanche, **la création de cet artefact GitHub n'a exécuté ni préparation, ni génération, ni recompilation du jeu**.
+
+### Périmètre et statut
+
+Ce paquet contient les deux changements binaires ciblés du correctif combiné :
+1. initialisation du local de taille à zéro avant les branches conditionnelles ;
+2. écriture du pointeur source guest courant dans le descripteur hostfn sur le chemin fallback.
+
+Il ne contient pas automatiquement les autres pistes ou correctifs indépendants du projet (TLS, shaders, ni l'objet de correctif Grok `main_main_0184_nullcheck.o`). Ils ne doivent pas être considérés comme intégrés à ce paquet.
+
+**Statut : candidat de test uniquement.** Les contrôles de construction et d'intégrité du paquet ont réussi, mais aucun test de gameplay avec ce DLL n'est encore enregistré. Il faut conserver l'installation précédente et valider le candidat en jeu, notamment lors des transitions et chargements où les crashs apparaissaient. Ne pas déclarer le crash résolu avant cette validation.
