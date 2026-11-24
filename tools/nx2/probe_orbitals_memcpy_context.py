@@ -122,7 +122,23 @@ def main(path):
                         pos=mm.find(needle,pos+1,filepos+length)
                     if len(hits)>=100: break
                 print(f"MEMORY_REFS_{label.upper()}_COUNT={len(hits)}")
-                print(f"MEMORY_REFS_{label.upper()}="+",".join(hex(x) for x in hits[:40]))
+                print(f"MEMORY_REFS_{label.upper()}="+",".join(hex(x) for x in hits))
+                # Dump a compact qword window around every reference. These
+                # are stack/object neighborhoods, not inferred call frames.
+                for index, hit in enumerate(hits, 1):
+                    lo=max(0,hit-0x30)
+                    blob=read_virtual(f,rs,lo,0x70)
+                    if blob is None:
+                        print(f"REF_CONTEXT_{label.upper()}_{index}=not-captured")
+                        continue
+                    words=" ".join(f"+{off-0x30:03x}:{struct.unpack_from('<Q',blob,off)[0]:016x}"
+                                   for off in range(0,len(blob)-7,8))
+                    print(f"REF_CONTEXT_{label.upper()}_{index}_AT={hit:#x} BASE={lo:#x}")
+                    print(f"REF_CONTEXT_{label.upper()}_{index}_QWORDS={words}")
+                if label == "tracker":
+                    obj=read_virtual(f,rs,value,0x200)
+                    if obj is not None:
+                        print("TRACKER_OBJECT_0x200="+obj.hex())
         # Resolve profiling flags used by fnprof_hit in this exact dump.
         if 4 in ss:
             mr,ms=ss[4]
