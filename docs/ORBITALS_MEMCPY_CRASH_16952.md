@@ -414,4 +414,29 @@ L'appel wrapper d'origine reste à son adresse `RVA 0x1B5A939A` : son adresse de
 Patcher reproductible : `tools/nx2/apply_orbitals_memcpy_fallback_patch.py`  
 Workflow de production de l'artefact : https://github.com/sinedgiveaways/tool/actions/runs/45483610141
 
-**État :** le patch a été généré à partir du binaire dont le PDB correspond au dump et les vérifications d'octets/du code cave ont réussi. Il reste à télécharger l'artefact, remplacer uniquement `orbitalgame.dll` dans l'installation existante et effectuer un test runtime. Aucun cycle de préparation ou de recompilation complète n'est nécessaire.
+**État : patch partiel généré, ne pas l'appliquer pour le gameplay à ce stade.** Les vérifications binaires ont réussi, mais un contrôle séparé des régions mémoire a révélé que le memcpy guest demande 86,246,656 octets alors que les régions engagées autour de la source et de la destination sont beaucoup plus petites. Corriger uniquement le champ source déplacerait le crash plus loin dans la copie et pourrait corrompre la mémoire. L'artefact est conservé comme expérience diagnostique versionnée ; ne remplace pas encore le DLL de ton installation.
+
+
+## Nouvelle découverte : la taille guest est elle-même invalide
+
+Le contrôle `MemoryInfoList` du dump a vérifié la couverture réelle des plages, y compris les régions adjacentes :
+- source guest calculée `x1 = 0x11C51F8A8) : région engagée `0x11C42E000 + 0x100000), fin `0x11C52E000). La lecture atteint une région réservée/non engagée après seulement `0xE758` octets.
+- destination `0x12E1A8000C) : région engagée `0x12E1A80000 + 0x180000), fin `0x12E1C00000`. L'écriture atteint une région réservée/non engagée après `0x17FFF4` octets.
+- taille demandée : `0x05240500` = 86,246,656 octets.
+
+Donc, même avec le pointeur source corrigé à `0x11C51F8A8`, le memcpy traverserait une zone non engagée côté source après environ 59 Ko et côté destination après environ 1,5 Mo. **La taille n'est pas sûre et le patch source seul ne constitue pas un correctif jouable.**
+
+Le code guest calcule cette taille avant l'appel :
+- `main+0x1759F4C: ldrsw x25, [sp, #0x88]`
+- `main+0x1759F7C: lsl x2, x25, #2`
+- valeur de pile : `[sp+0x88] = 0x01490140`
+- résultat : `x2 = 0x05240500`.
+
+L'origine de cette valeur est également identifiée dans le flot guest :
+- `main+0x1759E54: ldur d0, [x8, #-8]`
+- `main+0x1759E58: str d0, [sp, #0x88]`
+- puis `ldrsw x25, [sp, #0x88]`.
+
+La priorité devient de reconstruire le pointeur `x8) et les données à `[x8-8]` à `0x1759E54), puis de comprendre pourquoi leur DWORD bas vaut `0x01490140`. Il faut vérifier le layout de l'entrée sélectionnée dans la table `x27 = base + w20 * 0xE8` et ne pas supposer que le champ `-3` de `0x0CE01F2C00` est celui de `x27+0xD8` : cette correspondance n'est pas encore établie.
+
+Rapport MemoryInfoList : https://github.com/sinedgiveaways/tool/actions/runs/45484336193
