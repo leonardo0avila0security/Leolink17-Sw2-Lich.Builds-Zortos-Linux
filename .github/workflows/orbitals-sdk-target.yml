@@ -29,6 +29,7 @@ jobs:
           from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
           with ZipFile("exefs.zip") as z:
               nso=z.read("exefs/sdk")
+              subsdk=z.read("exefs/subsdk0")
           assert nso[:4] == b"NSO0", nso[:4]
           flags=struct.unpack_from("<I",nso,0x0c)[0]
           segs=[]
@@ -43,12 +44,22 @@ jobs:
               segs.append((name,memoff,raw))
           _,memoff,code=segs[0]
           out=[f"SDK NSO flags=0x{flags:X} text mem=0x{memoff:X} size=0x{len(code):X}",
-               "Candidate GOT memcpy target guest VA=0x7020002CD0; candidate SDK base=0x7020000000"]
-          for start,end in ((0x2000,0x3400),):
-              md=Cs(CS_ARCH_ARM64,CS_MODE_ARM)
-              out += ["",f"=== sdk text +0x{start:X}..+0x{end:X} ==="]
+               "Candidate GOT memcpy target guest VA=0x7020002CD0"]
+          md=Cs(CS_ARCH_ARM64,CS_MODE_ARM)
+          for start,end in ((0x2b00,0x2e00),(0x16b6d0,0x16b790)):
+              out += ["",f"=== sdk text +0x{start:X}..+0x{end:X} (base 0x7020000000) ==="]
               for ins in md.disasm(code[start:min(end,len(code))],0x7020000000+start):
                   out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
+          # Test whether the same address is an entry in subsdk0.
+          flags2=struct.unpack_from("<I",subsdk,0x0c)[0]
+          fileoff,memoff2,size=struct.unpack_from("<III",subsdk,0x10)
+          comp=struct.unpack_from("<I",subsdk,0x60)[0]
+          raw=subsdk[fileoff:fileoff+comp]
+          code2=lz4.block.decompress(raw,uncompressed_size=size) if flags2&1 else raw[:size]
+          out += ["",f"SUBSDK0 flags=0x{flags2:X} text mem=0x{memoff2:X} size=0x{len(code2):X}",
+                  "Candidate target offset=0x2CD0 if subsdk0 base is 0x7020000000"]
+          for ins in md.disasm(code2[0x2b00:min(0x2e00,len(code2))],0x7020000000+0x2b00):
+              out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
           Path("sdk-memcpy-target-disassembly.txt").write_text("\n".join(out)+"\n")
           print("\n".join(out))
           PY
