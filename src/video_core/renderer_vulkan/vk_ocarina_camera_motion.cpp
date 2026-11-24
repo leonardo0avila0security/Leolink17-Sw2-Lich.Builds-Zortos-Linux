@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <optional>
+#include <string_view>
 
 #include "common/logging.h"
 #include "common/settings.h"
@@ -1314,6 +1315,10 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
     return true;
 }
 VideoCommon::OcarinaUpscaleBackend ResolveOcarinaUpscaler(const Device& device) {
+    const char* value = std::getenv("EDEN_NX2_DLSS_REPLACEMENT");
+    if (value && std::string_view(value) == "native") {
+        return VideoCommon::OcarinaUpscaleBackend::Native;
+    }
     switch (Settings::values.ocarina_upscaler.GetValue()) {
     case Settings::OcarinaUpscaler::Off:
         return VideoCommon::OcarinaUpscaleBackend::Native;
@@ -1332,7 +1337,6 @@ VideoCommon::OcarinaUpscaleBackend ResolveOcarinaUpscaler(const Device& device) 
     default:
         break;
     }
-    const char* value = std::getenv("EDEN_NX2_DLSS_REPLACEMENT");
     bool dlss_available = false;
 #ifdef EGLANTINE_STREAMLINE
     dlss_available = Streamline::IsDlssAvailable();

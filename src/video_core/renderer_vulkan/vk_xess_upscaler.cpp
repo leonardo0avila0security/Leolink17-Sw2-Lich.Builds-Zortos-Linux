@@ -247,6 +247,9 @@ struct XessUpscaler::Impl {
         rejected_input_size = {};
         rejected_output_size = {};
         xess_output_size = {};
+        configured_input_size = {};
+        using_fallback_preset = false;
+        preferred_fallback_quality.reset();
     }
 
     void UpdateFallbackConfiguration(VkExtent2D input, VkExtent2D output, bool aa,
@@ -292,8 +295,9 @@ struct XessUpscaler::Impl {
             return;
         }
         api->set_logging_callback(context, XESS_LOGGING_LEVEL_WARNING, LogXeSS);
-        xess_quality_settings_t sdk_quality =
+        const xess_quality_settings_t selected_quality =
             aa ? XESS_QUALITY_SETTING_AA : ToXeSSQuality(quality);
+        xess_quality_settings_t sdk_quality = selected_quality;
         VkExtent2D xess_extent{};
         xess_2d_t optimal{};
         xess_2d_t minimum{};
@@ -339,15 +343,19 @@ struct XessUpscaler::Impl {
                    input_size.width <= maximum.x && input_size.height <= maximum.y;
         };
         if (!aa && !input_fits()) {
-            const auto selected_quality = sdk_quality;
             const auto selected_extent = xess_extent;
             const auto selected_optimal = optimal;
             const auto selected_minimum = minimum;
             const auto selected_maximum = maximum;
             bool found_supported_quality = false;
+            if (preferred_fallback_quality && *preferred_fallback_quality != selected_quality &&
+                query_configuration(*preferred_fallback_quality) && input_fits()) {
+                found_supported_quality = true;
+            }
             for (const xess_quality_settings_t candidate :
                  ToXeSSRatioQuality(input_size, output_extent)) {
-                if (candidate == selected_quality || !query_configuration(candidate)) {
+                if (found_supported_quality || candidate == selected_quality ||
+                    !query_configuration(candidate)) {
                     continue;
                 }
                 if (input_fits()) {
@@ -449,8 +457,12 @@ struct XessUpscaler::Impl {
         }
         first_execution = true;
         configured_output_size = output_extent;
+        configured_input_size = input_size;
         configured_aa = aa;
         configured_intermediate = use_intermediate;
+        active_quality = sdk_quality;
+        using_fallback_preset = sdk_quality != selected_quality;
+        preferred_fallback_quality.reset();
         ready.store(true, std::memory_order_release);
         LOG_INFO(Render_Vulkan,
              "XeSS-SR initialized for Ocarina input {}x{}, XeSS output {}x{}, window {}x{} "
@@ -666,16 +678,20 @@ struct XessUpscaler::Impl {
     xess_context_handle_t context{};
     VkExtent2D xess_output_size{};
     VkExtent2D configured_output_size{};
+    VkExtent2D configured_input_size{};
     VkExtent2D last_input_size{};
     xess_2d_t optimal_input{};
     xess_2d_t minimum_input{};
     xess_2d_t maximum_input{};
     VkExtent2D rejected_input_size{};
     VkExtent2D rejected_output_size{};
+    std::optional<xess_quality_settings_t> preferred_fallback_quality;
+    xess_quality_settings_t active_quality{XESS_QUALITY_SETTING_ULTRA_QUALITY};
     bool intermediate_output{};
     bool use_aa{};
     bool configured_aa{};
     bool configured_intermediate{};
+    bool using_fallback_preset{};
     std::mutex fallback_mutex;
     VkExtent2D fallback_input{};
     VkExtent2D fallback_output{};
@@ -761,6 +777,15 @@ bool XessUpscaler::Upscale(const Inputs& inputs) {
         state.CreateOutput(inputs.output_size);
     }
     bool ready = state.ready.load(std::memory_order_acquire);
+    if (ready && state.using_fallback_preset &&
+        (state.configured_input_size.width != inputs.render_size.width ||
+         state.configured_input_size.height != inputs.render_size.height)) {
+        const xess_quality_settings_t active_quality = state.active_quality;
+        state.history_reset_pending.store(true, std::memory_order_release);
+        state.DestroyContext();
+        state.preferred_fallback_quality = active_quality;
+        ready = false;
+    }
     if (ready && !state.ConfigurationMatches(inputs.output_size, use_aa, use_intermediate)) {
         state.DestroyContext();
         ready = false;
