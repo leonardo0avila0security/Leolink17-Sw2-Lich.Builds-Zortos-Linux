@@ -52,7 +52,7 @@ jobs:
         with:
           name: Orbitals-Recomp-Memcpy-Fix-Setup-Candidate-CLEAN-FULL-BUILD
           path: |
-            Orbitals-Recomp-Memcpy-Fix-Candidate.zip
+            Orbitals-Recomp-Memcpy-Fix-Setup-Candidate.zip
             orbitalgame.dll.patch-report.txt
           if-no-files-found: error
           compression-level: 0
