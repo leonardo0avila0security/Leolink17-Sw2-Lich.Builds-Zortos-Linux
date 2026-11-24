@@ -311,7 +311,7 @@ Les valeurs lues (`x27 entrée = 0x1800000001`, `x25 entrée = 0x7001759F74`) so
 - Les flags entry-probe et hostfn tracking sont à zéro.
 - Le chemin profilé `impcensus` est actif, mais les fonctions désassemblées ne montrent pas d'écriture dans les champs d'arguments.
 
-La piste prioritaire devient donc une corruption/réutilisation du bloc de contexte dans le même thread, ou une écriture d'un autre composant runtime non encore identifié. Le point déterminant est maintenant de comparer le bloc `0x1C92EAB0540` à quatre instants : juste avant l'appel guest wrapper, à l'entrée de `rt_dispatch`, à l'entrée du hostfn `memcpy` (`orbitals-recomp.exe+0x40CE0`) et juste avant l'appel au thunk UCRT. Cela dira à quelle frontière `source` et `size` deviennent faux.
+Cette hypothèse de corruption/réutilisation est désormais secondaire : le désassemblage complet révèle un chemin fallback qui atteint le wrapper sans rafraîchir le champ source. Il reste à reconstruire la valeur guest `x1` attendue à ce point et à confirmer le correctif minimal.
 
 Artefact du scan complet : https://github.com/sinedgiveaways/tool/actions/runs/45478450618
 
@@ -319,15 +319,15 @@ Artefact du scan complet : https://github.com/sinedgiveaways/tool/actions/runs/4
 ## Propriétaire de la source et objet guest voisin
 
 L'extraction mémoire déjà présente dans `orbitals_memcpy_runtime_corrige.zip` précise le lien entre le contexte et les objets guest :
-- `[context+0x48] = 0x11C51F6F0` : objet guest local à la pile ;
-- `0x11C51F700 = object+0x10) contient la séquence UTF-16 qui donne exactement le qword source invalide ;
-- `[context+0x98] = 0x0E40012C10` et `[context+0xA8] = 0x0E40012810` : deux autres objets guest liés au contexte ;
-- l'objet `0x0CE01F2C00` (base source attendue x25) contient notamment `[+0x38]=0x0E40012810`, `[+0xD8]=0x00000003FFFFFFFD` (DWORD bas signé -3, DWORD haut 3), `[+0xE0]=0x0000000AFFFFFFFF), `[+0xF0]=3), et `[+0x120]=0x0E40012810) ;
-- l'objet `0x0E40012810` référence en retour `0x0CE01F2C00) à son offset `+0x158), ce qui montre que ces structures sont liées.
+- `[context+0x48] = 0x11C51F6F0` : pointeur vers un objet guest situé sur la pile ;
+- `0x11C51F700` (objet +0x10) contient les unités UTF-16 dont les octets forment le qword source invalide ;
+- `[context+0x98] = 0x0E40012C10` et `[context+0xA8] = 0x0E40012810` : deux objets guest associés ;
+- l'objet `0x0CE01F2C00` contient notamment un pointeur vers `0x0E40012810` à `+0x38), ainsi que le champ signé `-3` à `+0xD8) (DWORD bas ; DWORD haut = 3) ;
+- l'objet `0x0E40012810` référence `0x0CE01F2C00` à son offset `+0x158`). Ces structures sont liées, mais leur rôle exact reste à établir.
 
 Le champ `-3` est donc localisé dans un objet de données réel, mais sa signification reste inconnue. Il ne faut pas le transformer en correctif tant qu'on n'a pas retrouvé son usage dans le code guest.
 
-Le prochain scan étendu doit retrouver tous les pointeurs vers `0x0CE01F2C00`, `0x0E40012810`, `0x0E40012C10`, `0x11C51F6F0) et la source attendue `0x0CE1682D40), puis exporter leurs fenêtres mémoire. Cela permettra d'identifier le propriétaire du buffer et de remonter à l'objet qui fournit l'offset `0x01490140`.
+Le scan étendu a retrouvé cinq références au pointeur `0x0CE01F2C00`, huit à `0x11C51F8A8`, douze à `0x0E40012C10` et quinze à `0x0E40012810`. Aucune référence directe à `0x0CE1682D40` n'est présente dans les plages capturées. Le probe suivant se concentre donc sur les variables locales de pile qui alimentent `x8), `x9) et `x19) dans le chemin fallback.
 
 
 ## Correction de l'interprétation du callsite : chemin fallback
@@ -343,16 +343,16 @@ Chemin réel dans le dump :
 
 Le chemin aligné, lui, prépare une première copie, puis éventuellement une copie de 4 octets. Il ne faut pas utiliser ses calculs `base+offset` pour interpréter le crash fallback.
 
-Le dump montre `R8 = 0x05240500). Cette taille est cohérente avec le chemin fallback : dans le code guest, `x2 = x25 << 2` à `main+0x175A0F7C`; avec `x25 = 0x01490140`, on obtient exactement `0x05240500`. La taille du memcpy fautif est donc probablement correcte dans ce chemin. La destination `0x12E1A8000C) est également celle préparée par le code guest.
+Le dump montre `R8 = 0x05240500`. Cette taille est cohérente avec le chemin fallback : dans le code guest, `x2 = x25 << 2` à `main+0x175A0F7C`; avec `x25 = 0x01490140`, on obtient exactement `0x05240500`. La taille du memcpy fautif est donc probablement correcte dans ce chemin. La destination `0x12E1A8000C` est également celle préparée par le code guest.
 
-Le problème restant est la source : le helper reçoit `RDX = 0x01460149013D0140`, qui n'est pas un pointeur. Le chemin fallback doit transmettre le registre guest `x1` sélectionné par `csel x1, x9, x8, eq` à `main+0x175A094). Le code x86 généré qui correspond à cette branche aboutit au bloc `1988E..198AA` ; ce bloc écrit la destination dans `[context+0]`, puis appelle le wrapper avec retour guest `0x700175A130`, mais ne met pas à jour `[context+8]` (source). Le champ source reste donc une ancienne valeur du contexte. C'est une omission très forte candidate dans la préparation des arguments du chemin fallback, pas une panne du chargeur d'import ni une corruption aléatoire démontrée.
+Le problème restant est la source : le helper reçoit `RDX = 0x01460149013D0140`, qui n'est pas un pointeur. Le chemin fallback doit transmettre le registre guest `x1` sélectionné par `csel x1, x9, x8, eq` à `main+0x1759F94`. Le code x86 généré qui correspond à cette branche aboutit au bloc `1988E..198AA` ; ce bloc écrit la destination dans `[context+0]`, puis appelle le wrapper avec retour guest `0x700175A130`, mais ne met pas à jour `[context+8]` (source). Le champ source reste donc une ancienne valeur du contexte. C'est une omission très forte candidate dans la préparation des arguments du chemin fallback, pas une panne du chargeur d'import ni une corruption aléatoire démontrée.
 
-Le correctif candidat, à confirmer avec les valeurs exactes de `x1`, est de sauvegarder le registre source courant dans `[context+8]` sur ce chemin avant le dispatch (et de sauvegarder aussi `x2` dans `[context+0x10]` pour rendre le marshalling explicite). Le probe de pile guest en cours doit déterminer si `x1) vaut `[x21+0x410]` ou la valeur de `[sp+0x38]` au moment du branchement.
+Le correctif candidat, à confirmer avec les valeurs exactes de `x1`, est de sauvegarder le registre source courant dans `[context+8]` sur ce chemin avant le dispatch (et de sauvegarder aussi `x2` dans `[context+0x10]` pour rendre le marshalling explicite). Le probe de pile guest en cours doit déterminer si `x1` vaut `[x21+0x410]` ou la valeur de `[sp+0x38]` au moment du branchement.
 
 
 ## Raccordement des deux branches AArch64 et x86
 
-Le chemin fallback AArch64 est désormais visible grâce à la fenêtre complète `main+0x1759E8C..0x175A130`. La condition de branchement est précise : taille inférieure à 8 octets ou bit 3 de `x1 | x0` actif (alignement non conforme) mène à `memcpy` à `0x175A12C). Le chemin aligné passe par `0x175A0F8..0x175A128` et effectue une première copie avant l'éventuelle copie de 4 octets.
+Le chemin fallback AArch64 est désormais visible grâce à la fenêtre complète `main+0x1759E8C..0x175A130`. La condition de branchement est précise : taille inférieure à 8 octets ou bit 3 de `x1 | x0` actif (alignement non conforme) mène à `memcpy` à `0x175A12C`. Le chemin aligné passe par `0x175A0F8..0x175A128` et effectue une première copie avant l'éventuelle copie de 4 octets.
 
 Le code hôte généré contient le test correspondant :
 - `cmp r13, 8; jb 1988e`
@@ -360,6 +360,6 @@ Le code hôte généré contient le test correspondant :
 - le bloc `1988e..198aa` positionne le PC guest de retour à `0x700175A130`, écrit `rdx` (destination) dans le contexte, puis appelle le wrapper ;
 - contrairement au chemin aligné, ce bloc ne stocke pas `r9` (source guest x1) dans `[context+8]`.
 
-Le dump présente exactement la signature attendue d'un champ source non rafraîchi : destination correcte, taille cohérente avec `x2), source égale à des octets de données UTF-16 provenant d'un objet guest. Le diagnostic se déplace donc vers la génération/mise à jour du contexte d'appel du chemin fallback de `f_7001759b20`.
+Le dump présente exactement la signature attendue d'un champ source non rafraîchi : destination correcte, taille cohérente avec `x2`, source égale à des octets de données UTF-16 provenant d'un objet guest. Le diagnostic se déplace donc vers la génération/mise à jour du contexte d'appel du chemin fallback de `f_7001759b20`.
 
 Désassemblage guest complet : https://github.com/sinedgiveaways/tool/actions/runs/45480761866
