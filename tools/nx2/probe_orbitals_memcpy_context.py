@@ -114,6 +114,18 @@ def main(path):
         expected_source=(source_base+source_offset)&0xFFFFFFFFFFFFFFFF
         guest_object=q(0x48)
         source_container=q(0xD0)
+        guest_sp=q(0x100)
+        active_sp=guest_sp-0x120
+        guest_stack=read_virtual(f,rs,active_sp,0x300)
+        print(f"GUEST_PREPROLOGUE_SP={guest_sp:#x} ACTIVE_SP_AFTER_SUB_120={active_sp:#x} STACK_CAPTURED={guest_stack is not None}")
+        if guest_stack is not None:
+            for off in range(0,0x300-7,8):
+                value=struct.unpack_from("<Q",guest_stack,off)[0]
+                print(f"GUEST_STACK_QWORD_{off:#04x}={value:#018x}")
+            x19=struct.unpack_from("<Q",guest_stack,0x20)[0]
+            x9=struct.unpack_from("<Q",guest_stack,0x38)[0]
+            x25s=struct.unpack_from("<i",guest_stack,0x88)[0]
+            print(f"GUEST_LOCAL_X19_CANDIDATE={x19:#x} X9_CANDIDATE={x9:#x} X25_SIGNED_LOCAL={x25s:#x} X2_SIZE_CANDIDATE={(x25s*4)&0xffffffffffffffff:#x}")
         aux_98=q(0x98)
         aux_A8=q(0xA8)
         needles=(
