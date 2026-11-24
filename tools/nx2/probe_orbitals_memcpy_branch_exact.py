@@ -47,15 +47,18 @@ def main(path):
   if not ctx: raise SystemExit("host context not captured")
   pre=q(f,rs,ctxp+0x100); sp=pre-0x120
   x29=q(f,rs,ctxp+0xe8); x24=q(f,rs,ctxp+0xc0)
-  x23_saved=q(f,rs,sp+0xf8); x24_saved=q(f,rs,sp+0xf0)
+  x23_live=q(f,rs,ctxp+0xb8); x23_saved=q(f,rs,sp+0xf8); x24_saved=q(f,rs,sp+0xf0)
   x21=q(f,rs,ctxp+0xa8); x27=q(f,rs,ctxp+0xd8)
   w12_ctx=u32(f,rs,ctxp+0x60); w12_stack=u32(f,rs,sp+0x4c)
   print(f"dump={fs} context={ctxp:#x} pre_sp={pre:#x} active_sp={sp:#x}")
   print(f"live_x21={hx(x21)} live_x27={hx(x27)} live_x29={hx(x29)} live_x24={hx(x24)}")
-  print(f"saved_x23={hx(x23_saved)} saved_x24={hx(x24_saved)} w12_ctx={hx(w12_ctx)} w12_stack_local={hx(w12_stack)}")
+  print(f"live_x23={hx(x23_live)} saved_x23={hx(x23_saved)} saved_x24={hx(x24_saved)} w12_ctx={hx(w12_ctx)} w12_stack_local={hx(w12_stack)}")
   p_x29=q(f,rs,x29-8) if x29 else None
   print(f"[live_x29-8]={hx(p_x29)}")
   idx=x24
+  pair_addr=(x23_live+idx*8) if x23_live is not None and idx is not None else None
+  w20raw=u32(f,rs,pair_addr+4) if pair_addr is not None else None
+  print(f"loop_pair_addr={hx(pair_addr)} w20_raw={hx(w20raw)} w20_signed={s32(w20raw) if w20raw is not None else None}")
   a2=(p_x29+idx*8) if p_x29 is not None and idx is not None else None
   w9raw=u32(f,rs,a2) if a2 is not None else None
   print(f"live_loop_index={hx(idx)} index_addr={hx(a2)} w9_raw={hx(w9raw)} w9_signed={s32(w9raw) if w9raw is not None else None}")
@@ -63,7 +66,7 @@ def main(path):
    arr=q(f,rs,x21+0x158); count=u32(f,rs,x21+0x160)
    print(f"table_base={hx(arr)} table_count={hx(count)}")
    delta=(x27-arr) if arr is not None else None
-   print(f"record_delta={hx(delta)} record_index={(delta//0xe8 if delta is not None and delta%0xe8==0 else 'not-stride-aligned')}")
+   print(f"record_delta={hx(delta)} record_index={(delta//0xe8 if delta is not None and delta%0xe8==0 else 'not-stride-aligned')} computed_record_index={s32(w20raw) if w20raw is not None else 'not-captured'} record_matches_computed={delta==s32(w20raw)*0xe8 if delta is not None and w20raw is not None else 'unknown'}")
    d0=q(f,rs,x27+0xd0); d8raw=u32(f,rs,x27+0xd8); d8=s32(d8raw) if d8raw is not None else None
    base=d0 if d0 else x27+0x10
    eff=(base+(d8<<6)) if d8 is not None else None
@@ -74,7 +77,7 @@ def main(path):
    print(f"stack_local_sp+0x88={hx(local)} (used later by ldrsw)")
    # The load/store at 0x1759e54 is conditional. Reconstruct its gate.
    less=(s32(w9raw)<d8) if w9raw is not None and d8 is not None else None
-   flag=(w12_ctx&1) if w12_ctx is not None else None
+   flag=(w12_stack&1) if w12_ctx is not None else None
    gate=(less and flag==1) if less is not None and flag is not None else None
    print(f"branch_cmp_signed_w9_lt_w8={less} w12_bit0={flag} load_store_gate={gate}")
    if gate is False: print("RESULT: branch skips ldur d0 / str [sp+0x88]; existing stack local survives into later size use.")
