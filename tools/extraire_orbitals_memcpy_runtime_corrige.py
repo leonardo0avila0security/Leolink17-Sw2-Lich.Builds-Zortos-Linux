@@ -256,7 +256,7 @@ def main():
         global_specs = [
             ("dispatch1_flag_global", exe_base + 0x909E40, 0x40),
             ("dispatch1_state_global", exe_base + 0x7183B8, 0x40),
-            ("dispatch2_globals", exe_base + 0x1AA0A080, 0x100),
+            ("dispatch2_globals", exe_base + 0x1AAA0C0, 0x40),
             ("dll_dispatch_resolver_global", dll_base + 0x1D0744C8, 0x40),
             ("dll_dispatch_call_global", dll_base + 0x1D0744D8, 0x40),
         ]
@@ -267,6 +267,36 @@ def main():
             else:
                 add_file(files, name + ".bin", data)
                 report.append(f"{name} @ 0x{va:016X} : {len(data)} octets extraits")
+        dispatch_globals = read_virtual(f, ranges, exe_base + 0x1AAA0C0, 0x40)
+        if dispatch_globals:
+            table_ptr, code_base, hash_base, limit = struct.unpack_from("<QQQQ", dispatch_globals)
+            key = 0x7020002CD0
+            delta = (key - hash_base) & 0xFFFFFFFFFFFFFFFF
+            index = ((delta >> 2) | (delta << 62)) & 0xFFFFFFFFFFFFFFFF
+            report.append("[RESOLUTION TABLE FOR 0x7020002CD0]")
+            report.append(f"table=0x{table_ptr:016X} code_base=0x{code_base:016X} hash_base=0x{hash_base:016X} limit=0x{limit:X}")
+            report.append(f"key=0x{key:016X} delta=0x{delta:X} ror2_index=0x{index:X}")
+            if index < limit:
+                entry_data = read_virtual(f, ranges, table_ptr + index*4, 4)
+                if entry_data:
+                    entry = struct.unpack_from("<I", entry_data)[0]
+                    target = (code_base + entry) & 0xFFFFFFFFFFFFFFFF
+                    report.append(f"table_entry=0x{entry:X} resolved_host_target=0x{target:016X}")
+                    target_code = read_virtual(f, ranges, target, 0x600)
+                    if target_code:
+                        add_file(files, "dispatch2_resolved_target.bin", target_code)
+                        files["dispatch2_resolved_target_addr.txt"] = f"0x{target:016X}\\n".encode("ascii")
+                        report.append("resolved target code: 0x600 octets captured")
+                    else:
+                        report.append("resolved target code: not captured")
+                else:
+                    report.append("hash table entry: not captured")
+            else:
+                report.append("hash index is outside table limit")
+        else:
+            report.append("dispatch2 globals block not captured")
+        report.append("")
+
         for name, va in [
             ("dll_dispatch_resolver_global", dll_base + 0x1D0744C8),
             ("dll_dispatch_call_global", dll_base + 0x1D0744D8),
@@ -376,6 +406,32 @@ def main():
                         if len(source_hits) >= 100:
                             break
                 report.append(f"Occurrences du qword source dans les plages mémoire : {len(source_hits)}")
+                # Le plus bas hit canonical est souvent le début du buffer dont le premier qword est interprété comme pointeur.
+                canonical_hits = [v for v in source_hits if 0x100000000 <= v < 0x0000800000000000]
+                if canonical_hits:
+                    buffer_va = min(canonical_hits)
+                    report.append(f"Candidate source-data buffer address = 0x{buffer_va:016X}")
+                    buffer_data = read_virtual(f, ranges, buffer_va, 0x4000)
+                    if buffer_data:
+                        add_file(files, "candidate_source_data_buffer_0x4000.bin", buffer_data)
+                    pointer_needle = struct.pack("<Q", buffer_va)
+                    pointer_refs = []
+                    with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                        for va, length, file_pos in ranges:
+                            pos = mm.find(pointer_needle, file_pos, file_pos+length)
+                            while pos >= 0:
+                                pointer_refs.append(va + (pos-file_pos))
+                                if len(pointer_refs) >= 100:
+                                    break
+                                pos = mm.find(pointer_needle, pos+1, file_pos+length)
+                            if len(pointer_refs) >= 100:
+                                break
+                    report.append(f"References to candidate source buffer: {len(pointer_refs)}")
+                    for n, ref_va in enumerate(pointer_refs, 1):
+                        report.append(f"  source_buffer_ref_{n}: 0x{ref_va:016X}")
+                        ref_data = read_virtual(f, ranges, max(0, ref_va-0x40), 0xA0)
+                        if ref_data:
+                            add_file(files, f"source_buffer_ref_{n:02d}.bin", ref_data)
                 for n, hit_va in enumerate(source_hits, 1):
                     report.append(f"  source_hit_{n}: 0x{hit_va:016X}")
                     around = read_virtual(f, ranges, max(0, hit_va-0x40), 0xA0)
