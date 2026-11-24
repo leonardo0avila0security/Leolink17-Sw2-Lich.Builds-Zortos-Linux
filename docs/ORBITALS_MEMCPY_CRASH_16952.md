@@ -613,3 +613,34 @@ Le correctif minimal à valider est maintenant clair sur le plan sémantique : i
 Le correctif distinct du marshalling doit également écrire le vrai pointeur guest `x1 = 0x11C51F8A8` dans `[context+8]` sur le chemin fallback. Les deux changements sont nécessaires pour éviter à la fois la longueur hors limites et la source non canonique.
 
 **Aucun de ces deux changements n'est encore déclaré jouable.** Le workflow `orbitals-memcpy-size-local-host-layout` inspecte maintenant le prologue x86-64 généré et les accès au local `[rbx-0x98]` dans le DLL exact de la release. Il doit établir le point d'insertion sûr et les octets d'origine avant de produire un patch binaire versionné. Il ne lance ni `setup.py`, ni `prepare.py`, ni génération/recompilation du jeu.
+
+
+
+## Patch binaire combiné généré — 24 novembre
+
+L'inspection du DLL exact a confirmé les accès machine au local :
+- entrée de `f_7001759b20` : `orbitalgame.dll+0x1B5A8470) ;
+- `mov rbx,[rsi+0x100]` à RVA `0x1B5A84AE` charge le SP guest pré-prologue ;
+- le point juste après, RVA `0x1B5A84B5`, contient `lea r14,[rbx-0x120]` et sert de site d'insertion sûr après chargement de RBX ;
+- l'unique écriture du local est `mov [rbx-0x98],r9` à RVA `0x1B5A8BAD` ;
+- lecture consommatrice : `movsxd r8,dword ptr [rbx-0x98]` à RVA `0x1B5A8E13` ;
+- la troisième référence à `rbx-0x98` (RVA `0x1B5A91C4`) ne fait que calculer l'adresse et la passer dans le contexte ; ce n'est pas une initialisation.
+
+Le patcher versionné applique deux modifications dans le même DLL :
+1. À RVA `0x1B5A84B5), remplace l'instruction de 7 octets par un saut vers un trampoline qui rejoue la LEA originale, exécute `mov qword ptr [rbx-0x98],0`, puis revient à `0x1B5A84BC).
+2. À RVA `0x1B5A9385), rejoue l'écriture originale du PC guest, ajoute `mov [rsi+8],r9` pour transmettre le pointeur guest `x1`, puis revient à `0x1B5A938C`.
+
+Le second trampoline est placé à `CAVE_RVA+0x20) ; les deux utilisent le padding INT3 vérifié de la release. Les instructions d'origine sont conservées dans les trampolines. Le DLL est verrouillé par SHA-256 et PDB GUID/âge.
+
+Patcher : `tools/nx2/apply_orbitals_memcpy_size_and_source_patch.py`  
+Workflow : `orbitals-memcpy-size-and-source-patch`  
+Commit patcher : `5efb7c4325dd776cce86d890acbea9f4310d4792`  
+Commit correction RVA/fichier : `c13b8f6e1cfa246ceebc940e1fa211ed268528eb`  
+Run de production : https://github.com/sinedgiveaways/tool/actions/runs/45496338669  
+Artefact : https://github.com/sinedgiveaways/tool/actions/runs/45496338669/artifacts/14968721707
+
+Hashes :
+- DLL d'origine : `8678d073fdffc4f3d518f492dbc3428f7257dc1ebe8467bb85d87a6633d97cf4`
+- DLL patché : `b0f31b26d16f433b0a4a9767d5237d0eb487ff177deb8b56458029a065106e41`
+
+**Validation actuelle :** création du patch et vérification des octets/branches/trampolines réussies dans GitHub Actions. Le DLL n'a pas encore été lancé dans le jeu : ce patch est un candidat à tester, pas une correction gameplay certifiée. Il ne faut pas déclarer le crash résolu avant un test du jeu, plusieurs démarrages et une traversée des transitions où les crashes se produisaient. Aucune préparation, régénération ou recompilation du jeu n'a été exécutée.
