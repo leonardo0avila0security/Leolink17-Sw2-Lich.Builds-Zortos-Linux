@@ -64,6 +64,9 @@
 #include "video_core/nx2_debug_control.h"
 #include "video_core/nx2_fast_draw.h"
 #include "video_core/nx2_profile.h"
+#ifdef LICHII_NVN_DIRECT
+#include "video_core/nvn_direct/nvn_direct.h"
+#endif
 #include "video_core/nx2_render_view.h"
 #include "video_core/renderer_vulkan/submission_policy.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
@@ -5962,6 +5965,24 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
     if (!framebuffer_addr) {
         return {};
     }
+#ifdef LICHII_NVN_DIRECT
+    if (device.IsNvnDirect()) {
+        // NVN2 direct mode: the replay's image of the frame the address names
+        // (core/nvn_hook.cpp PresentDirect), taken by the composite in progress once the GPU
+        // finished it (RendererVulkan::Composite). Nothing else presents.
+        if ((framebuffer_addr & NVN_DIRECT_FRAME_TAG) == 0 || !direct_display_frame) {
+            return {};
+        }
+        return FramebufferTextureInfo{
+            .image = direct_display_frame->image,
+            .image_view = direct_display_frame->view,
+            .width = direct_display_frame->width,
+            .height = direct_display_frame->height,
+            .scaled_width = direct_display_frame->scaled_width,
+            .scaled_height = direct_display_frame->scaled_height,
+        };
+    }
+#endif
     std::scoped_lock lock{texture_cache.mutex};
     const auto [image_view, scaled] =
         texture_cache.TryFindFramebufferImageView(config, framebuffer_addr);
