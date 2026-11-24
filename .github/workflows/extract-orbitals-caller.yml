@@ -39,6 +39,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: orbitals-caller-1B5A8FF0
-          path: caller_1B5A8FF0/
+          path: orbitals_exception_analysis/
           if-no-files-found: error
           retention-days: 14
