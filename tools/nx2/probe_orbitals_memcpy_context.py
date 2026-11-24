@@ -124,8 +124,15 @@ def main(path):
                 print(f"GUEST_STACK_QWORD_{off:#04x}={value:#018x}")
             x19=struct.unpack_from("<Q",guest_stack,0x20)[0]
             x9=struct.unpack_from("<Q",guest_stack,0x38)[0]
+            x21=struct.unpack_from("<Q",guest_stack,0x08)[0]
             x25s=struct.unpack_from("<i",guest_stack,0x88)[0]
-            print(f"GUEST_LOCAL_X19_CANDIDATE={x19:#x} X9_CANDIDATE={x9:#x} X25_SIGNED_LOCAL={x25s:#x} X2_SIZE_CANDIDATE={(x25s*4)&0xffffffffffffffff:#x}")
+            x21_410=x21+0x410
+            x8_data=read_virtual(f,rs,x21_410,0x80) if 0x100000000 <= x21_410 < 0x800000000000 else None
+            print(f"GUEST_LOCAL_X19_CANDIDATE={x19:#x} X9_CANDIDATE={x9:#x} X21_CANDIDATE={x21:#x} X21_PLUS_410={x21_410:#x} X25_SIGNED_LOCAL={x25s:#x} X2_SIZE_CANDIDATE={(x25s*4)&0xffffffffffffffff:#x}")
+            print(f"X8_FROM_X21_PLUS_410_CAPTURED={x8_data is not None}")
+            if x8_data is not None:
+                for off in range(0,len(x8_data)-7,8):
+                    print(f"X21_PLUS_410_QWORD_{off:#x}={struct.unpack_from('<Q',x8_data,off)[0]:#x}")
         aux_98=q(0x98)
         aux_A8=q(0xA8)
         needles=(
