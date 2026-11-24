@@ -90,8 +90,41 @@ jobs:
           echo "$RUNNER_TEMP/orbitals-dump/$DUMP" > "$RUNNER_TEMP/orbitals-dump/dump-path.txt"
           df -h "$RUNNER_TEMP"
 
-      - name: Install disassembler
-        run: python -m pip install --disable-pip-version-check capstone
+      - name: Install disassembler and PDB tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check capstone
+          sudo apt-get update -qq
+          sudo apt-get install -y llvm
+          command -v llvm-pdbutil || find /usr -name llvm-pdbutil -type f | head
+
+      - name: Resolve exact DLL PDB symbols around crash callers
+        shell: bash
+        run: |
+          set -euo pipefail
+          PDB="build-assets/matching-symbols/orbitals-recomp/orbitalgame.dll.pdb"
+          test -s "$PDB"
+          llvm-pdbutil dump -summary "$PDB" > pdb-summary.txt
+          llvm-pdbutil dump -publics -symbols "$PDB" > pdb-all-symbols.txt
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          lines=Path("pdb-all-symbols.txt").read_text(errors="replace").splitlines()
+          needles=("1B5A8","1B5A9","1C11D","1C7C6","1C7ED")
+          hits=[i for i,s in enumerate(lines) if any(n.lower() in s.lower() for n in needles)]
+          out=["PDB SYMBOL CONTEXT — exact crash-build DLL"]
+          out += Path("pdb-summary.txt").read_text(errors="replace").splitlines()
+          out += [f"total symbol-output lines={len(lines)}; matching lines={len(hits)}"]
+          seen=set()
+          for i in hits:
+              a=max(0,i-5); b=min(len(lines),i+9)
+              if any(k in seen for k in range(a,b)): continue
+              seen.update(range(a,b))
+              out += ["",f"--- pdb output lines {a+1}-{b} ---",*lines[a:b]]
+          Path("pdb-symbol-context.txt").write_text("\\n".join(out)+"\\n")
+          print("\\n".join(out))
+          PY
 
       - name: Parse exception, threads, modules, memory and stack
         shell: bash
@@ -464,6 +497,8 @@ jobs:
             runtime-disassembly.txt
             fault-memory-analysis.txt
             runtime-dispatch-targets.txt
+            pdb-summary.txt
+            pdb-symbol-context.txt
             build-assets/asset-inventory.txt
             build-assets/extracted-symbol-files.txt
             build-assets/matching-symbols.zip
