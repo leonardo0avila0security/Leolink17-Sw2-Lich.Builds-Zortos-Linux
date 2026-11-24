@@ -225,3 +225,15 @@ Le dispatch hostfn `+0x36E50` transmet le contexte au slot `memcpy` `+0x40CE0`. 
 Artefacts :
 - PDB map : https://github.com/sinedgiveaways/tool/actions/runs/45468282799
 - résolution et désassemblage dispatch/profiling : https://github.com/sinedgiveaways/tool/actions/runs/45469242197
+
+
+## Nouvelle piste prioritaire : entry-probe sur la fonction fautive
+
+Le désassemblage du vrai objet compilé montre que `f_7001759b20` possède, dès son prologue, un chemin d'instrumentation spécial :
+- après `mov rcx -> rsi` et le chargement de l'identifiant guest `0x7001759b20`, il teste un marqueur patchable à `f_7001759b20+0x29) ;
+- si le marqueur est actif, il saute à `f_7001759b20+0x110E), appelle `fnprof_hit(0x7001759b20, [context+0xF0], [context])`, puis revient au corps normal ;
+- `fnprof_hit` contient précisément un cas spécial pour `0x7001759b20` qui appelle `rt_patch_record_entry` lorsque `g_orbitals_entry_probe` est activé.
+
+Dans le dump, `impcensus_on = 1` : la collecte de profiling est active. Le wrapper de memcpy a également pris son chemin profilé (retour `+0x1C11DF58`). Il reste à vérifier si le marqueur d'entrée de `f_7001759b20` et le flag `g_orbitals_entry_probe` sont actifs. Si oui, l'instrumentation de cette fonction devient le premier suspect à isoler, avant de modifier le code guest.
+
+Cette piste n'établit pas encore que `fnprof_hit` corrompt les arguments : le callback ne reçoit pas directement le pointeur du contexte dans ses arguments standard. Il faut examiner `rt_patch_record_entry` et les valeurs du flag, puis faire un essai contrôlé avec le probe désactivé. Aucun patch de jeu n'est proposé avant cette vérification.
