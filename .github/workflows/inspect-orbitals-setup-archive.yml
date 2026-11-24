@@ -13,41 +13,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Download setup archives
+      - name: Download exact archives
         run: |
-          curl --fail --location --retry 3 --output setup.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup.zip"
-          curl --fail --location --retry 3 --output setup-work.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup-work.zip"
-      - name: Inspect real setup entrypoints and NUP flow
+          curl -fL --retry 3 -o setup.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup.zip"
+          curl -fL --retry 3 -o orbitals-recomp.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
+      - name: Verify runtime launcher setup dependencies
         run: |
           python - <<'PY'
           import zipfile
-          for archive in ("setup.zip","setup-work.zip"):
-              print("\\n===== "+archive+" ROOT =====")
+          for archive in ("setup.zip","orbitals-recomp.zip"):
+              print("\\n===== "+archive+" =====")
               with zipfile.ZipFile(archive) as z:
                   names=z.namelist()
-                  roots=sorted({n.split("/",1)[0] for n in names if "/" in n})
-                  print("ROOTS",roots)
-                  targets=[n for n in names if n in (
-                    "setup/src/tools/prepare/nup.py",
-                    "setup/src/tools/prepare/prepare.py",
-                    "setup/src/tools/prepare/gamecopy.py",
-                    "setup/pyproject.toml",
-                    "setup/README.md",
-                    "setup/src/main.py",
-                    "setup/src/__main__.py",
-                    "setup/src/tools/prepare/__main__.py",
-                    "setup/setup.py",
-                    "setup/setup.bat",
-                    "setup/prepare.bat",
-                    "setup/setup-state.json",
-                  )]
-                  for n in targets:
-                      print("\\n===== FILE "+n+" =====")
-                      try: print(z.read(n).decode("utf-8",errors="replace")[:30000])
-                      except Exception as e: print("READ ERROR",e)
-                  print("\\n===== LIKELY LAUNCHERS =====")
                   for n in names:
+                      low=n.lower()
                       base=n.rsplit("/",1)[-1].lower()
-                      if base in ("pyproject.toml","uv.lock","setup.bat","setup.cmd","prepare.bat","prepare.cmd","orbitals-recomp.exe","setup-state.json","readme.md"):
-                          print(n)
+                      if (base in ("python.exe","pythonw.exe","python314.dll","python3.dll","orbitals-recomp.exe","setup-state.json","orbitals.ini","prepare.py","setup.py","setup.exe","readme.md","pyproject.toml")
+                          or n.count("/")<=1):
+                          print(n, z.getinfo(n).file_size)
+                  print("TOTAL_FILES",len(names))
+                  if archive=="setup.zip":
+                      for n in ("setup/src/tools/prepare/prepare.py","setup/src/tools/prepare/gamesource.py","setup/src/tools/prepare/machine.py"):
+                          if n in names:
+                              data=z.read(n).decode("utf-8",errors="replace")
+                              print("\\n===== "+n+" (tail) =====")
+                              print(data[-10000:])
           PY
