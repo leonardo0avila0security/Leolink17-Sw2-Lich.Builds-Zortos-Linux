@@ -185,7 +185,7 @@ jobs:
                           if sym_off+24 <= len(dynsym):
                               st_name = struct.unpack_from("<I", dynsym, sym_off)[0]
                               if st_name < len(dynstr):
-                                  end = dynstr.find(b"\\0", st_name)
+                                  end = dynstr.find(b"\0", st_name)
                                   if end < 0: end = len(dynstr)
                                   name = dynstr[st_name:end].decode("utf-8", "replace")
                           import_lines.append(f"  GOT+0x{r_offset:X}: sym#{sym_index} {name} reloc_type={r_info & 0xFFFFFFFF} addend={r_addend}")
@@ -197,10 +197,10 @@ jobs:
               off = stub-0x7000000000-text_mem
               if 0 <= off < len(text):
                   code = text[off:min(len(text), off+0x30)]
-                  import_lines.append(f"\\nGUEST STUB 0x{stub:X}")
+                  import_lines.append(f"\nGUEST STUB 0x{stub:X}")
                   for ins in md.disasm(code, stub):
                       import_lines.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
-          Path("guest-import-resolution.txt").write_text("\\n".join(import_lines)+"\\n", encoding="utf-8")
+          Path("guest-import-resolution.txt").write_text("\n".join(import_lines)+"\n", encoding="utf-8")
 
           md = Cs(CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN)
           md.detail = True
@@ -215,8 +215,8 @@ jobs:
           ]
           for ins in md.disasm(text[offset:offset+function_size], target):
               out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
-          Path("guest-function-7001759b20.asm").write_text("\\n".join(out)+"\\n", encoding="utf-8")
-          print("\\n".join(out))
+          Path("guest-function-7001759b20.asm").write_text("\n".join(out)+"\n", encoding="utf-8")
+          print("\n".join(out))
           PY
           {
             echo "=== MATCHING PDB COMPILAND 667 ==="
