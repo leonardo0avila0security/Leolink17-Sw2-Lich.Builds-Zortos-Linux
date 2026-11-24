@@ -27,6 +27,20 @@ jobs:
           unzip -p orbitals-recomp.zip orbitalgame.dll.pdb > orbitalgame.dll.pdb
           ls -lh orbitalgame.dll.pdb
 
+      - name: Download original ExeFS and matching generated object
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors --output exefs.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/exefs.zip"
+          echo "d98906b79f4948618441366609936a498436a26cc0cc09f183b499450a5149cb  exefs.zip" | sha256sum --check
+          unzip -p exefs.zip exefs/main > main.nso
+          curl --fail --location --retry 3 --retry-all-errors --output setup-work.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup-work.zip"
+          echo "4daff8c457fb71de797e328c3eb0124170a3ef51677867cd71bcedbf66c30f40  setup-work.zip" | sha256sum --check
+          unzip -p setup-work.zip setup-work/obj/main_main_0184.o > main_main_0184.o
+          ls -lh main.nso main_main_0184.o
+
       - name: Install LLVM PDB reader
         run: |
           sudo apt-get update
@@ -58,6 +72,84 @@ jobs:
           wc -l pdb-publics.txt pdb-globals.txt pdb-modules.txt
           cat pdb-target-analysis.txt
 
+      - name: Disassemble original guest function and generated object
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check capstone lz4
+          llvm-pdbutil dump --symbols --modi=667 orbitalgame.dll.pdb > pdb-mod667-symbols.txt
+          llvm-objdump -t main_main_0184.o > object-symbols.txt
+          llvm-objdump -d --no-show-raw-insn main_main_0184.o > object-disassembly.txt
+          grep -n -A100 -B5 "f_7001759b20" object-disassembly.txt > object-target-function.txt || true
+          python - <<'PY'
+          import re, struct
+          from pathlib import Path
+          import lz4.block
+          from capstone import Cs, CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN
+
+          nso = Path("main.nso").read_bytes()
+          if nso[:4] != b"NSO0":
+              raise SystemExit(f"Not an NSO0 file: {nso[:4]!r}")
+          flags = struct.unpack_from("<I", nso, 0x0C)[0]
+          text_off, text_mem, text_size = struct.unpack_from("<III", nso, 0x10)
+          text_file_size = struct.unpack_from("<I", nso, 0x60)[0]
+          packed = nso[text_off:text_off+text_file_size]
+          if len(packed) != text_file_size:
+              raise SystemExit("Truncated NSO .text segment")
+          if flags & 0x80:
+              raise SystemExit("NSO uses ZBIC; LZ4 path is not valid")
+          text = lz4.block.decompress(packed, uncompressed_size=text_size) if flags & 1 else packed
+          if len(text) != text_size:
+              raise SystemExit(f"Wrong .text size: {len(text):#x} != {text_size:#x}")
+
+          publics = Path("pdb-publics.txt").read_text(encoding="utf-8", errors="replace")
+          rows = []
+          lines = publics.splitlines()
+          for i, line in enumerate(lines[:-1]):
+              m = re.search(r"`(f_700[0-9a-fA-F]+)`", line)
+              a = re.search(r"addr = 0001:(\\d+)", lines[i+1])
+              if m and a:
+                  rows.append((int(m.group(1)[2:], 16), int(a.group(1)), m.group(1)))
+          rows.sort()
+          target = 0x7001759B20
+          matches = [i for i, row in enumerate(rows) if row[0] == target]
+          if len(matches) != 1:
+              raise SystemExit(f"Expected one public symbol f_{target:x}, found {len(matches)}")
+          idx = matches[0]
+          if idx+1 >= len(rows):
+              raise SystemExit("No next guest function symbol found")
+          next_guest = rows[idx+1][0]
+          function_size = next_guest-target
+          guest_base = 0x7000000000
+          offset = target-guest_base-text_mem
+          if offset < 0 or offset+function_size > len(text):
+              raise SystemExit(f"Function range outside .text: off={offset:#x} size={function_size:#x} text={len(text):#x}")
+
+          md = Cs(CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN)
+          md.detail = True
+          out = [
+              "ORIGINAL ARM64 GUEST FUNCTION",
+              f"NSO flags=0x{flags:X}",
+              f".text mem=0x{text_mem:X} size=0x{text_size:X} compressed=0x{text_file_size:X}",
+              f"symbol=f_{target:X} guest_start=0x{target:X}",
+              f"next_symbol=f_{next_guest:X} inferred_size=0x{function_size:X}",
+              f"text_offset=0x{offset:X}",
+              "",
+          ]
+          for ins in md.disasm(text[offset:offset+function_size], target):
+              out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
+          Path("guest-function-7001759b20.asm").write_text("\\n".join(out)+"\\n", encoding="utf-8")
+          print("\\n".join(out))
+          PY
+          {
+            echo "=== MATCHING PDB COMPILAND 667 ==="
+            grep -n -A100 -B5 "f_7001759b20" pdb-mod667-symbols.txt || true
+            echo
+            echo "=== GENERATED OBJECT TARGET FUNCTION ==="
+            cat object-target-function.txt
+          } > target-function-analysis.txt
+          cat target-function-analysis.txt
+
       - name: Upload PDB symbol reports
         uses: actions/upload-artifact@v7
         with:
@@ -69,5 +161,10 @@ jobs:
             pdb-modules.txt
             pdb-section-layout.txt
             pdb-target-analysis.txt
+            pdb-mod667-symbols.txt
+            object-symbols.txt
+            object-target-function.txt
+            guest-function-7001759b20.asm
+            target-function-analysis.txt
           if-no-files-found: error
           retention-days: 14
