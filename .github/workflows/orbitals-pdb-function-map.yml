@@ -1,0 +1,53 @@
+name: orbitals-pdb-function-map
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-pdb-function-map.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  map-symbols:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download matching DLL and PDB
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output orbitals-recomp.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
+          python - <<'PY'
+          from zipfile import ZipFile
+          from pathlib import Path
+          z=ZipFile("orbitals-recomp.zip")
+          for name in ("orbitalgame.dll","orbitalgame.dll.pdb"):
+            data=z.read(name)
+            Path(name).write_bytes(data)
+            print(name,len(data))
+          PY
+      - name: Resolve PDB function addresses
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y llvm
+          llvm-pdbutil dump -summary orbitalgame.dll.pdb > pdb-summary.txt
+          llvm-pdbutil dump -publics -symbols orbitalgame.dll.pdb > pdb-all-symbols.txt
+          grep -ni -C 8 -E 'f_70070c1de0|f_70070c1df0|f_7001759b20|f_7001750480|rt_dispatch' pdb-all-symbols.txt > pdb-target-functions.txt || true
+          cat pdb-summary.txt
+          cat pdb-target-functions.txt
+      - name: Upload PDB symbol map
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-pdb-function-map
+          path: |
+            pdb-summary.txt
+            pdb-target-functions.txt
+          if-no-files-found: error
+          retention-days: 14
