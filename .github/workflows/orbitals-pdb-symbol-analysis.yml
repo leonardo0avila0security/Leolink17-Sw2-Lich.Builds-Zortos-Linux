@@ -340,7 +340,6 @@ jobs:
             target-function-analysis.txt
           if-no-files-found: error
           retention-days: 14
- orbitals-recomp-zip-list.txt > orbitals-recomp-zip-relevant.txt || true
 
       - name: Install LLVM PDB reader
         run: |
