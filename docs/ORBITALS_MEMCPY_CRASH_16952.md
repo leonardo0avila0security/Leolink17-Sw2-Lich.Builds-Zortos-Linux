@@ -328,3 +328,19 @@ L'extraction mémoire déjà présente dans `orbitals_memcpy_runtime_corrige.zip
 Le champ `-3` est donc localisé dans un objet de données réel, mais sa signification reste inconnue. Il ne faut pas le transformer en correctif tant qu'on n'a pas retrouvé son usage dans le code guest.
 
 Le prochain scan étendu doit retrouver tous les pointeurs vers `0x0CE01F2C00`, `0x0E40012810`, `0x0E40012C10`, `0x11C51F6F0) et la source attendue `0x0CE1682D40), puis exporter leurs fenêtres mémoire. Cela permettra d'identifier le propriétaire du buffer et de remonter à l'objet qui fournit l'offset `0x01490140`.
+
+
+## Confirmation géométrique des deux copies guest
+
+Les adresses confirment exactement la logique du callsite :
+- destination initiale du premier bloc : `0x12E05EFECC`
+- destination du deuxième appel : `0x12E1A8000C`
+- différence : `0x01490140), exactement la valeur de `x27) ;
+- source initiale : `0x0CE01F2C00`
+- source attendue du deuxième appel : `0x0CE1682D40`
+- différence : `0x01490140), encore exactement `x27).
+
+Le deuxième appel est donc bien le fragment de 4 octets à la fin d'une copie plus grande :
+`memcpy(dest_base + 0x01490140, src_base + 0x01490140, 4)`.
+
+Le helper reçoit au contraire `memcpy(0x12E1A8000C, 0x01460149013D0140, 0x05240500)`. La destination est exactement correcte ; la source et la taille ne le sont pas. Ce n'est pas un simple mauvais calcul de l'offset dans le code guest : le calcul des deux adresses attendues est corroboré indépendamment par l'écart source/destination et par les instructions AArch64.
