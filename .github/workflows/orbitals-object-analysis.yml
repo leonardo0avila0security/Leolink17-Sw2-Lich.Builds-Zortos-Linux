@@ -1,0 +1,92 @@
+name: orbitals-object-analysis
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-object-analysis.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-object:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download setup-work archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output setup-work.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup-work.zip"
+          unzip -l setup-work.zip | grep -E 'main_main_0184\.(o|key)$|link\.rsp$' > archive-targets.txt || true
+          cat archive-targets.txt
+          python - <<'PY'
+          from zipfile import ZipFile
+          from pathlib import Path
+          z=ZipFile("setup-work.zip")
+          wanted=[
+            "setup-work/obj/main_main_0184.o",
+            "setup-work/obj/main_main_0184.key",
+            "setup-work/obj/link.rsp",
+          ]
+          for name in wanted:
+            try:
+              data=z.read(name)
+            except KeyError:
+              print("MISSING:",name)
+              continue
+            p=Path("object-input")/Path(name).name
+            p.parent.mkdir(exist_ok=True)
+            p.write_bytes(data)
+            print(name, len(data), "->",p)
+          PY
+          file object-input/* | tee object-file-types.txt
+      - name: Inspect object symbols and disassembly
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y llvm
+          llvm-readobj --file-headers --sections --symbols object-input/main_main_0184.o > object-readobj.txt
+          llvm-nm --print-size --size-sort --demangle object-input/main_main_0184.o > object-symbols.txt || true
+          llvm-objdump -d --demangle --no-show-raw-insn object-input/main_main_0184.o > object-disassembly.txt
+          grep -ni -C 4 -E '7001759b20|70017508e0|1759b20|17508e0|f_700' object-symbols.txt > crash-symbol-hits.txt || true
+          grep -ni -C 12 -E '7001759b20|70017508e0|1759b20|17508e0|f_700' object-disassembly.txt > crash-disassembly-hits.txt || true
+          {
+            echo "OBJECT TYPE"
+            cat object-file-types.txt
+            echo
+            echo "ARCHIVE TARGETS"
+            cat archive-targets.txt
+            echo
+            echo "CRASH SYMBOL HITS"
+            cat crash-symbol-hits.txt
+            echo
+            echo "CRASH DISASSEMBLY HITS"
+            cat crash-disassembly-hits.txt
+            echo
+            echo "SYMBOL COUNT"
+            wc -l object-symbols.txt
+            echo "DISASSEMBLY LINES"
+            wc -l object-disassembly.txt
+          } > object-analysis-summary.txt
+          cat object-analysis-summary.txt
+      - name: Upload object analysis only
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-main-0184-object-analysis
+          path: |
+            object-analysis-summary.txt
+            object-file-types.txt
+            archive-targets.txt
+            object-readobj.txt
+            object-symbols.txt
+            object-disassembly.txt
+            crash-symbol-hits.txt
+            crash-disassembly-hits.txt
+          if-no-files-found: error
+          retention-days: 14
