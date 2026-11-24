@@ -31,12 +31,12 @@ jobs:
           mkdir -p package
           cp orbitalgame.dll orbitalgame.dll.patch-report.txt tools/nx2/apply_orbitals_memcpy_fallback_patch.py package/
           printf '%s\n' \
-            'DIAGNOSTIC ONLY — DO NOT USE FOR GAMEPLAY YET.' \\
-            'This patch only refreshes the memcpy source argument field.' \\
-            'The guest size remains 0x05240500 (86,246,656 bytes), larger than committed source and destination spans in dump 16952.' \\
-            'Applying this DLL may move the crash into an out-of-bounds copy.' \\
-            'Do not replace the installed DLL until the size-origin bug is resolved.' \\
-            'No setup.py, prepare.py, regeneration, or full rebuild is involved.' \\
+            'DIAGNOSTIC ONLY — DO NOT USE FOR GAMEPLAY YET.' \
+            'This patch only refreshes the memcpy source argument field.' \
+            'The guest size remains 0x05240500 (86,246,656 bytes), larger than committed source and destination spans in dump 16952.' \
+            'Applying this DLL may move the crash into an out-of-bounds copy.' \
+            'Do not replace the installed DLL until the size-origin bug is resolved.' \
+            'No setup.py, prepare.py, regeneration, or full rebuild is involved.' \
             > package/README.txt
           cd package
           zip -q -j ../orbitals-memcpy-fallback-patch.zip *
