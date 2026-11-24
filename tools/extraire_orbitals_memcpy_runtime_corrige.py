@@ -18,6 +18,7 @@ Sortie :
 """
 
 import argparse
+import mmap
 import struct
 import sys
 import zipfile
@@ -238,9 +239,14 @@ def main():
         for name, va in targets.items():
             code_specs.append((f"{name}_code", va, 0x300))
         code_specs += [
+            ("caller_main_1B5A8F00", dll_base + 0x1B5A8F00, 0x1000),
             ("caller_main_1B5A9300", dll_base + 0x1B5A9300, 0x240),
             ("wrapper_1C11DEE0", dll_base + 0x1C11DEE0, 0x240),
             ("wrapper_internal_1C11DF00", dll_base + 0x1C11DF00, 0x240),
+            ("runtime_resolver_1C7ED0C0", dll_base + 0x1C7ED0C0, 0x500),
+            ("runtime_call_dispatch_1C7ED0E0", dll_base + 0x1C7ED0E0, 0x700),
+            ("dll_memcpy_1C7C6F90", dll_base + 0x1C7C6F90, 0x300),
+            ("dll_memmove_1C7C6CD0", dll_base + 0x1C7C6CD0, 0x300),
             ("exe_copy_helper_40C000", exe_base + 0x40C00, 0x180),
             ("exe_memcpy_thunk_70C400", exe_base + 0x70C400, 0x180),
             ("exe_pre_copy_helper_29FCB0", exe_base + 0x29FCB0, 0x180),
@@ -299,6 +305,56 @@ def main():
                 report.append("ExceptionStream trop court.")
         else:
             report.append("ExceptionStream absent.")
+            report.append("")
+
+        # Inspecter les vrais arguments du memcpy et le bloc de contexte pointé par RSI.
+        if exception_regs:
+            rsi_ptr = exception_regs.get("RSI", 0)
+            dst_ptr = exception_regs.get("RCX", 0)
+            src_ptr = exception_regs.get("RDX", 0)
+            size_arg = exception_regs.get("R8", 0)
+            report.append("[MEMOIRE AUTOUR DU MEMCPY FAUTIF]")
+            report.append(f"RSI(context/descriptor)=0x{rsi_ptr:016X}")
+            report.append(f"RCX(destination)=0x{dst_ptr:016X} RDX(source)=0x{src_ptr:016X} R8(size)=0x{size_arg:X}")
+            if rsi_ptr:
+                desc = read_virtual(f, ranges, rsi_ptr, 0x400)
+                if desc:
+                    add_file(files, "exception_rsi_descriptor_0x400.bin", desc)
+                    rows = ["QWORDS DU BLOC RSI (0x400 octets)"]
+                    for off in range(0, len(desc)-7, 8):
+                        val = struct.unpack_from("<Q", desc, off)[0]
+                        rows.append(f"+0x{off:03X} = 0x{val:016X}")
+                    files["exception_rsi_descriptor_qwords.txt"] = ("\\n".join(rows)+"\\n").encode("utf-8")
+                    report.append("Bloc RSI : 0x400 octets capturés.")
+                else:
+                    report.append("Bloc RSI : non capturé.")
+            if dst_ptr:
+                dest_mem = read_virtual(f, ranges, max(0, dst_ptr-0x80), 0x280)
+                if dest_mem:
+                    add_file(files, "memcpy_destination_neighborhood.bin", dest_mem)
+                    report.append("Voisinage destination : 0x280 octets capturés.")
+                else:
+                    report.append("Voisinage destination : non capturé.")
+            # Recherche le qword source exact dans les plages mémoire du dump.
+            if src_ptr and src_ptr < 0x0000800000000000:
+                needle = struct.pack("<Q", src_ptr)
+                source_hits = []
+                with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                    for va, length, file_pos in ranges:
+                        pos = mm.find(needle, file_pos, file_pos + length)
+                        while pos >= 0:
+                            source_hits.append(va + (pos-file_pos))
+                            if len(source_hits) >= 100:
+                                break
+                            pos = mm.find(needle, pos+1, file_pos+length)
+                        if len(source_hits) >= 100:
+                            break
+                report.append(f"Occurrences du qword source dans les plages mémoire : {len(source_hits)}")
+                for n, hit_va in enumerate(source_hits, 1):
+                    report.append(f"  source_hit_{n}: 0x{hit_va:016X}")
+                    around = read_virtual(f, ranges, max(0, hit_va-0x40), 0xA0)
+                    if around:
+                        add_file(files, f"source_pattern_hit_{n:02d}.bin", around)
             report.append("")
 
         # ThreadList : récupérer les piles par leur VA depuis Memory64List.
