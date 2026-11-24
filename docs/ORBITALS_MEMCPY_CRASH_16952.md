@@ -76,3 +76,32 @@ Le premier DWORD est bien un entier signé `-3` ; le DWORD adjacent vaut `3`. Do
 - Workflow d'inventaire du C généré (aucun fichier source correspondant trouvé) : https://github.com/sinedgiveaways/tool/actions/runs/45455524457
 - Release des données : https://github.com/sinedgiveaways/tool/releases/tag/analysis-data
 - Archive de rapports runtime : artefact `orbitals-dump-analysis` du premier workflow.
+
+
+## Analyse de l'objet compilé exact (24 novembre, suite)
+
+L'archive `setup-work.zip` contient `setup-work/obj/main_main_0184.o` (412,812 octets). Cet objet est un fichier COFF x86-64 généré par la recompilation, pas du code ARM64 brut. Il définit réellement les symboles :
+- `f_7001759b20` à l'offset objet `0x18980`
+- `f_70017508e0` à l'offset objet `0x147C0`
+- `f_7001750480` à l'offset objet `0x13AC0`
+
+La pile du dump contient `0x7001759B20` deux fois et `0x700175053C`, qui se situe dans la plage de la fonction guest `f_7001750480` (entrée `0x7001750480`). La pile contient aussi `0x70070C1DE0` suivi d'un retour guest `0x700175A130`. Cela donne un lien concret entre `f_7001759b20` et le wrapper guest `f_70070c1de0`, mais la correspondance exacte entre le PC guest de retour et l'un des callsites natifs reste à vérifier.
+
+Les relocations COFF de `f_7001759b20` identifient ces appels externes :
+- objet `0x18B6A` -> `rt_dispatch`
+- objet `0x191B0` -> `f_70070c1df0`
+- objet `0x19843` -> `f_70070c1de0`
+- objet `0x198AB` -> `f_70070c1de0`
+
+Le code autour des deux appels à `f_70070c1de0` prépare deux descripteurs différents :
+- premier chemin : `[rsi]=rdx`, `[rsi+0x10]=r13 & 0x78`, puis appel de `f_70070c1de0` ; `[rsi+8]` n'est pas réécrit dans ce bloc, il peut donc provenir d'un état antérieur du contexte.
+- second chemin (si `r13 & 4)) : `[rsi+8]=r9`, `[rsi+0x10]=r13`, `[rsi]=rdx+rax), puis appel de `f_70070c1de0`.
+
+Le crash capture `[rsi]=0x12E1A8000C`, `[rsi+8]=0x01460149013D0140`, `[rsi+0x10]=0x05240500`. Ces valeurs ne correspondent pas directement aux constantes et opérations visibles dans les deux callsites ci-dessus. Il faut donc examiner la définition de `f_70070c1de0` et remonter au bloc exact qui alimente son contexte ; ne pas conclure que le problème est déjà identifié dans `f_7001759b20`.
+
+Un workflow ciblé a été ajouté pour scanner les objets compilés et retrouver les définitions de `f_70070c1de0` / `f_70070c1df0`, sans recompiler ni régénérer le jeu :
+- workflow : https://github.com/sinedgiveaways/tool/actions/workflows/orbitals-copy-callee-analysis.yml
+- commit du workflow : `d7e5e452b39525c23090e323d3191a20c12de485`
+- analyse de l'objet `main_main_0184.o` : https://github.com/sinedgiveaways/tool/actions/runs/45464966158
+
+La prochaine étape est d'identifier le ou les objets qui définissent `f_70070c1de0` et `f_70070c1df0`, puis de lire leurs instructions et relocations autour des appels au helper host. Ce sera le point de preuve nécessaire pour déterminer si le mauvais pointeur est créé dans le wrapper, dans son appelant guest, ou plus tôt.
