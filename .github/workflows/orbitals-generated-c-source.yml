@@ -1,0 +1,52 @@
+name: orbitals-generated-c-source
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-generated-c-source.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generated:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download setup-work archive
+        run: curl --fail --location --retry 3 -o setup-work.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup-work.zip"
+      - name: Find generated C for crash function
+        run: |
+          python - <<'PY'
+          from zipfile import ZipFile
+          from pathlib import Path
+          import re
+          z=ZipFile("setup-work.zip")
+          names=z.namelist()
+          candidates=[n for n in names if "main_main_0184" in n.lower() or n.lower().endswith(".c")]
+          out=["SETUP-WORK GENERATED SOURCE INVENTORY",f"archive entries={len(names)}",f"candidate C/object entries={len(candidates)}"]
+          for n in candidates[:200]:
+              out.append(f"{n} ({z.getinfo(n).file_size})")
+          matches=[]
+          for n in names:
+              if not n.lower().endswith((".c",".cc",".cpp",".h")): continue
+              try: data=z.read(n)
+              except: continue
+              if b"f_7001759b20" in data or b"f_70017508e0" in data:
+                  matches.append(n)
+                  Path("generated-"+Path(n).name).write_bytes(data)
+          out += ["",f"files containing crash symbols={len(matches)}",*matches]
+          Path("generated-c-inventory.txt").write_text("\n".join(out)+"\n")
+          print("\n".join(out))
+          PY
+      - name: Upload generated source
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-generated-c-source
+          path: |
+            generated-c-inventory.txt
+            generated-*.c
+            generated-*.h
+          if-no-files-found: warn
+          retention-days: 14
