@@ -330,17 +330,36 @@ Le champ `-3` est donc localisé dans un objet de données réel, mais sa signif
 Le prochain scan étendu doit retrouver tous les pointeurs vers `0x0CE01F2C00`, `0x0E40012810`, `0x0E40012C10`, `0x11C51F6F0) et la source attendue `0x0CE1682D40), puis exporter leurs fenêtres mémoire. Cela permettra d'identifier le propriétaire du buffer et de remonter à l'objet qui fournit l'offset `0x01490140`.
 
 
-## Confirmation géométrique des deux copies guest
+## Correction de l'interprétation du callsite : chemin fallback
 
-Les adresses confirment exactement la logique du callsite :
-- destination initiale du premier bloc : `0x12E05EFECC`
-- destination du deuxième appel : `0x12E1A8000C`
-- différence : `0x01490140), exactement la valeur de `x27) ;
-- source initiale : `0x0CE01F2C00`
-- source attendue du deuxième appel : `0x0CE1682D40`
-- différence : `0x01490140), encore exactement `x27).
+L'analyse complète du désassemblage guest a révélé deux chemins distincts vers l'instruction `memcpy` de retour `main+0x175A130`. L'analyse précédente qui interprétait systématiquement cet appel comme une copie finale de 4 octets ne s'applique qu'au chemin aligné ; ce n'est pas le chemin du dump.
 
-Le deuxième appel est donc bien le fragment de 4 octets à la fin d'une copie plus grande :
-`memcpy(dest_base + 0x01490140, src_base + 0x01490140, 4)`.
+Chemin réel dans le dump :
+- `main+0x175A0E8: cmp x2, #8`
+- `main+0x175A0EC: b.lo #0x175A12C`
+- `main+0x175A0F0: orr w8, w1, w0`
+- `main+0x175A0F4: tbnz w8, #3, #0x175A12C`
+- la branche saute directement à `main+0x175A12C: bl memcpy`, sans passer par la préparation du chemin aligné à `0x175A0F8..0x175A128`.
 
-Le helper reçoit au contraire `memcpy(0x12E1A8000C, 0x01460149013D0140, 0x05240500)`. La destination est exactement correcte ; la source et la taille ne le sont pas. Ce n'est pas un simple mauvais calcul de l'offset dans le code guest : le calcul des deux adresses attendues est corroboré indépendamment par l'écart source/destination et par les instructions AArch64.
+Le chemin aligné, lui, prépare une première copie, puis éventuellement une copie de 4 octets. Il ne faut pas utiliser ses calculs `base+offset` pour interpréter le crash fallback.
+
+Le dump montre `R8 = 0x05240500). Cette taille est cohérente avec le chemin fallback : dans le code guest, `x2 = x25 << 2` à `main+0x175A0F7C`; avec `x25 = 0x01490140`, on obtient exactement `0x05240500`. La taille du memcpy fautif est donc probablement correcte dans ce chemin. La destination `0x12E1A8000C) est également celle préparée par le code guest.
+
+Le problème restant est la source : le helper reçoit `RDX = 0x01460149013D0140`, qui n'est pas un pointeur. Le chemin fallback doit transmettre le registre guest `x1` sélectionné par `csel x1, x9, x8, eq` à `main+0x175A094). Le code x86 généré qui correspond à cette branche aboutit au bloc `1988E..198AA` ; ce bloc écrit la destination dans `[context+0]`, puis appelle le wrapper avec retour guest `0x700175A130`, mais ne met pas à jour `[context+8]` (source). Le champ source reste donc une ancienne valeur du contexte. C'est une omission très forte candidate dans la préparation des arguments du chemin fallback, pas une panne du chargeur d'import ni une corruption aléatoire démontrée.
+
+Le correctif candidat, à confirmer avec les valeurs exactes de `x1`, est de sauvegarder le registre source courant dans `[context+8]` sur ce chemin avant le dispatch (et de sauvegarder aussi `x2` dans `[context+0x10]` pour rendre le marshalling explicite). Le probe de pile guest en cours doit déterminer si `x1) vaut `[x21+0x410]` ou la valeur de `[sp+0x38]` au moment du branchement.
+
+
+## Raccordement des deux branches AArch64 et x86
+
+Le chemin fallback AArch64 est désormais visible grâce à la fenêtre complète `main+0x1759E8C..0x175A130`. La condition de branchement est précise : taille inférieure à 8 octets ou bit 3 de `x1 | x0` actif (alignement non conforme) mène à `memcpy` à `0x175A12C). Le chemin aligné passe par `0x175A0F8..0x175A128` et effectue une première copie avant l'éventuelle copie de 4 octets.
+
+Le code hôte généré contient le test correspondant :
+- `cmp r13, 8; jb 1988e`
+- `or r9, rdx` puis `test al, 8; jne 1988e`
+- le bloc `1988e..198aa` positionne le PC guest de retour à `0x700175A130`, écrit `rdx` (destination) dans le contexte, puis appelle le wrapper ;
+- contrairement au chemin aligné, ce bloc ne stocke pas `r9` (source guest x1) dans `[context+8]`.
+
+Le dump présente exactement la signature attendue d'un champ source non rafraîchi : destination correcte, taille cohérente avec `x2), source égale à des octets de données UTF-16 provenant d'un objet guest. Le diagnostic se déplace donc vers la génération/mise à jour du contexte d'appel du chemin fallback de `f_7001759b20`.
+
+Désassemblage guest complet : https://github.com/sinedgiveaways/tool/actions/runs/45480761866
