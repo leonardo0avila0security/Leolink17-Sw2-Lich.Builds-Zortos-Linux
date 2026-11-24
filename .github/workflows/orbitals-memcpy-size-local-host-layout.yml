@@ -1,0 +1,30 @@
+name: orbitals-memcpy-size-local-host-layout
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-memcpy-size-local-host-layout.yml"
+      - "tools/nx2/inspect_orbitals_memcpy_size_local.py"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact runtime archive (no rebuild)
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors --output orbitals-recomp.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
+      - name: Inspect generated host function and local accesses
+        run: |
+          python -m pip install --disable-pip-version-check capstone
+          python tools/nx2/inspect_orbitals_memcpy_size_local.py | tee size-local-host-layout.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-memcpy-size-local-host-layout
+          path: size-local-host-layout.txt
+          if-no-files-found: error
+          retention-days: 14
