@@ -107,7 +107,7 @@ jobs:
           lines = publics.splitlines()
           for i, line in enumerate(lines[:-1]):
               m = re.search(r"`(f_700[0-9a-fA-F]+)`", line)
-              a = re.search(r"addr = 0001:(\\d+)", lines[i+1])
+              a = re.search(r"addr = 0001:(\d+)", lines[i+1])
               if m and a:
                   rows.append((int(m.group(1)[2:], 16), int(a.group(1)), m.group(1)))
           rows.sort()
