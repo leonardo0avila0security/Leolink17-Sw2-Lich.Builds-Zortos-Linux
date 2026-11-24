@@ -74,6 +74,16 @@ def main(path):
         for off in (0,8,0x10,0x40,0x48,0xC8,0xD0,0xD8,0xE0,0xE8,0xF0,0x100,0x138):
             print(f"DESC+{off:03X}={q(off):#018x}")
         base=q(0xD8); offset=q(0xC8); expected=(base+offset)&0xFFFFFFFFFFFFFFFF
+        guest_stack=q(0x100)
+        saved_x27_data=read_virtual(f,rs,guest_stack-0x48,8)
+        saved_x25_data=read_virtual(f,rs,guest_stack-0x38,8)
+        saved_x27=struct.unpack("<Q",saved_x27_data)[0] if saved_x27_data else None
+        saved_x25=struct.unpack("<Q",saved_x25_data)[0] if saved_x25_data else None
+        print(f"GUEST_STACK_FRAME_BASE={guest_stack:#x}")
+        print("ENTRY_SAVED_X27="+(hex(saved_x27) if saved_x27 is not None else "not-captured"))
+        print("ENTRY_SAVED_X25="+(hex(saved_x25) if saved_x25 is not None else "not-captured"))
+        print(f"CURRENT_X27_CANDIDATE_CONTEXT_D8={base:#x}")
+        print(f"CURRENT_X25_CANDIDATE_CONTEXT_C8={offset:#x}")
         print(f"EXPECTED_SOURCE_FROM_GUEST_ADD=[rsi+0xD8]+[rsi+0xC8]={base:#x}+{offset:#x}={expected:#x}")
         data=read_virtual(f,rs,expected,0x100)
         print("EXPECTED_SOURCE_CAPTURED="+("yes" if data is not None else "no"))
