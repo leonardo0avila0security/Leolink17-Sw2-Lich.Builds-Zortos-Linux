@@ -47,27 +47,27 @@ def main(path):
             for off in (0xD0,0xD8,0x120,0x158,0x410):
                 print(f"x21+{off:#x} qword={q(x21obj,off) if off+8<=len(x21obj) else 'outside'}")
         table=0x0E40012810
-        size=0x10000
-        blob=readv(f,ranges,table,size)
-        print(f"\n[TABLE] base={table:#x} requested={size:#x} captured={0 if blob is None else len(blob):#x} stride=0xE8")
+        print(f"\\n[TABLE] base={table:#x} stride=0xE8; probing each entry separately")
         matches=[]
-        if blob:
-            for idx in range(min(0x10000//0xE8,256)):
-                off=idx*0xE8
-                if off+0xE0>len(blob):break
-                ptr=q(blob,off+0xD0)
-                raw=q(blob,off+0xD8)
-                count=s32(raw)
-                base=ptr if ptr else table+off+0x10
-                x8=(base+(count<<6))&0xffffffffffffffff
-                load_addr=(x8-8)&0xffffffffffffffff
-                loaded=readv(f,ranges,load_addr,8)
-                val=q(loaded,0) if loaded else None
-                if ptr or raw:
-                    print(f"idx={idx:3d} x27={table+off:#x} +D0={ptr:#x} +D8raw={raw:#018x} s32={count} base={base:#x} x8-8={load_addr:#x} d0={('unmapped' if val is None else hex(val))}")
-                if val is not None and (val&0xffffffff)==0x01490140:
-                    matches.append((idx,table+off,ptr,raw,base,x8,load_addr,val))
-        print(f"\nMATCHES_LOW32_01490140={len(matches)}")
+        for idx in range(256):
+            rec_addr=table+idx*0xE8
+            rec=readv(f,ranges,rec_addr,0xE0)
+            if rec is None:
+                if idx<12: print(f"idx={idx:3d} x27={rec_addr:#x} NOT_CAPTURED")
+                continue
+            ptr=q(rec,0xD0)
+            raw=q(rec,0xD8)
+            count=s32(raw)
+            base=ptr if ptr else rec_addr+0x10
+            x8=(base+(count<<6))&0xffffffffffffffff
+            load_addr=(x8-8)&0xffffffffffffffff
+            loaded=readv(f,ranges,load_addr,8)
+            val=q(loaded,0) if loaded else None
+            if ptr or raw or val is not None:
+                print(f"idx={idx:3d} x27={rec_addr:#x} +D0={ptr:#x} +D8raw={raw:#018x} s32={count} base={base:#x} x8-8={load_addr:#x} d0={('unmapped' if val is None else hex(val))}")
+            if val is not None and (val&0xffffffff)==0x01490140:
+                matches.append((idx,rec_addr,ptr,raw,base,x8,load_addr,val))
+        print(f"\\nMATCHES_LOW32_01490140={len(matches)}")
         for x in matches: print("MATCH "+ " ".join(hex(v) if isinstance(v,int) else str(v) for v in x))
         for label,addr,n in (("source_stack_object",0x11C51F8A8,0x200),("string_object",0x11C51F6F0,0x100),("x21_preceding",x21-0x200,0x420)):
             data=readv(f,ranges,addr,n)
