@@ -58,9 +58,6 @@ jobs:
                   out.append(f"BAD ZIP: {e}")
           Path("asset-inventory.txt").write_text("\n".join(out)+"\n", encoding="utf-8")
           print("\n".join(out))
-          marker = "[MEMOIRE AUTOUR DU MEMCPY FAUTIF]"
-          pos = report.find(marker)
-          open("fault-memory-analysis.txt", "w", encoding="utf-8").write(report[pos:] if pos >= 0 else "Memory section not present in runtime report\\n")
           PY
           cd matching-symbols
           find . -type f -printf '%p %s bytes\n' | sort > ../extracted-symbol-files.txt
@@ -433,6 +430,9 @@ jobs:
                   out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
           open("runtime-disassembly.txt", "w", encoding="utf-8").write("\n".join(out)+"\n")
           print("\n".join(out))
+          marker = "[MEMOIRE AUTOUR DU MEMCPY FAUTIF]"
+          pos = report.find(marker)
+          open("fault-memory-analysis.txt", "w", encoding="utf-8").write(report[pos:] if pos >= 0 else "Memory section not present in runtime report\\n")
           PY
 
       - name: Upload text reports and targeted extracts (never the dump)
