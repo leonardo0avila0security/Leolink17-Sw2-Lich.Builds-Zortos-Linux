@@ -280,3 +280,32 @@ Artefacts :
 Le script `tools/nx2/probe_orbitals_memcpy_context.py` a été enrichi pour exporter les fenêtres qword autour de chaque référence mémoire au descripteur, au tracker et à l'objet guest voisin. Il exporte également les 0x200 premiers octets du tracker. Ce probe reste en lecture seule : il ne modifie ni le dump, ni les archives de jeu, ni les sources compilées.
 
 Commit du script : `dc6d642ca5f316236bc6fbdb8f6e422d5c22959b`. Le workflow ciblé correspondant est en cours d'exécution ; ses résultats doivent être ajoutés ici avant de tirer une conclusion sur le partage ou la réutilisation du descripteur.
+
+
+## Résultat du scan des références mémoire — run 45478450618
+
+Le probe enrichi a terminé avec succès sur le dump exact. Il confirme :
+- 87 occurrences du pointeur de contexte `0x1C92EAB0540` dans les plages mémoire capturées ;
+- 11 références au tracker `0x1C92EB90780` ;
+- 2 références à l'objet guest `0x11C51F6F0` (à partir de `context+0x48)).
+
+Interprétation :
+1. La grande majorité des 87 références au contexte se trouve dans la pile du thread fautif `0x5B10` (plage `0x19AFFF...`). Cela correspond à des variables locales, sauvegardes de registres et structures d'appel de ce même thread ; ce n'est pas une preuve de partage entre threads.
+2. Deux références supplémentaires au contexte se trouvent dans la zone heap `0x1C9B6F82...`. L'une conserve une copie des arguments fautifs (destination `0x12E1A8000C`, source `0x01460149013D0140`, taille `0x05240500`) ; l'autre conserve le PC guest `0x7001759B20`, le retour `orbitalgame.dll+0x1B5A939F` et un pointeur de frame. Cela ressemble à des enregistrements runtime/diagnostic autour de l'appel. Leur existence ne prouve pas qu'un autre thread ait écrit dans le contexte.
+3. Le pointeur `context+0x48 = 0x11C51F6F0` est confirmé comme un objet guest référencé aussi depuis `0x11C51F6B8`. À l'adresse `0x11C51F700` (objet +0x10) se trouvent les unités UTF-16 dont les octets forment précisément le qword source invalide. La source fautive correspond donc au contenu inline de cet objet guest, pas à une adresse.
+4. Le tracker `0x1C92EB90780` contient le pointeur du contexte dans ses champs `+0x18` et `+0x20`. Son premier qword vaut zéro, cohérent avec le fait que `rt_dispatch` ne prend pas le chemin de préemption dans ce snapshot. Le tracker n'identifie pas encore un écrivain concurrent.
+
+### Correction d'une hypothèse du probe précédent
+
+Le rapport de comparaison des registres avait appelé `context+0x100` « guest stack frame base » et lu `-0x48/-0x38` pour en déduire `x27/x25`. Cette base et ces offsets n'ont pas été validés par le prologue AArch64 de `f_7001759b20`. Les valeurs `0x1800000001` et `0x7001759F74` ne doivent donc pas être utilisées comme preuves des registres sauvegardés. Le fichier `descriptor_ptr_100_000000011C51F680.bin` montre d'ailleurs une structure de données, pas un frame pointer clairement identifié.
+
+### Ce que le nouveau résultat élimine — et ce qu'il laisse ouvert
+
+- Le scan des piles ne montre pas que le contexte soit activement partagé avec un autre thread.
+- Le chemin de préemption de `rt_dispatch` est inactif dans le snapshot (premier qword du tracker = 0).
+- Les flags entry-probe et hostfn tracking sont à zéro.
+- Le chemin profilé `impcensus` est actif, mais les fonctions désassemblées ne montrent pas d'écriture dans les champs d'arguments.
+
+La piste prioritaire devient donc une corruption/réutilisation du bloc de contexte dans le même thread, ou une écriture d'un autre composant runtime non encore identifié. Le point déterminant est maintenant de comparer le bloc `0x1C92EAB0540` à quatre instants : juste avant l'appel guest wrapper, à l'entrée de `rt_dispatch`, à l'entrée du hostfn `memcpy` (`orbitals-recomp.exe+0x40CE0`) et juste avant l'appel au thunk UCRT. Cela dira à quelle frontière `source` et `size` deviennent faux.
+
+Artefact du scan complet : https://github.com/sinedgiveaways/tool/actions/runs/45478450618
