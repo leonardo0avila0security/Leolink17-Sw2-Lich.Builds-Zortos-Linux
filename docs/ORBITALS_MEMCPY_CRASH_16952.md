@@ -295,9 +295,14 @@ Interprétation :
 3. Le pointeur `context+0x48 = 0x11C51F6F0` est confirmé comme un objet guest référencé aussi depuis `0x11C51F6B8`. À l'adresse `0x11C51F700` (objet +0x10) se trouvent les unités UTF-16 dont les octets forment précisément le qword source invalide. La source fautive correspond donc au contenu inline de cet objet guest, pas à une adresse.
 4. Le tracker `0x1C92EB90780` contient le pointeur du contexte dans ses champs `+0x18` et `+0x20`. Son premier qword vaut zéro, cohérent avec le fait que `rt_dispatch` ne prend pas le chemin de préemption dans ce snapshot. Le tracker n'identifie pas encore un écrivain concurrent.
 
-### Correction d'une hypothèse du probe précédent
+### Validation des offsets de registres du probe précédent
 
-Le rapport de comparaison des registres avait appelé `context+0x100` « guest stack frame base » et lu `-0x48/-0x38` pour en déduire `x27/x25`. Cette base et ces offsets n'ont pas été validés par le prologue AArch64 de `f_7001759b20`. Les valeurs `0x1800000001` et `0x7001759F74` ne doivent donc pas être utilisées comme preuves des registres sauvegardés. Le fichier `descriptor_ptr_100_000000011C51F680.bin` montre d'ailleurs une structure de données, pas un frame pointer clairement identifié.
+Après confrontation avec le prologue AArch64 de `f_7001759b20`, les offsets du probe sont cohérents :
+- `context+0x100 = 0x11C51F680` correspond au pointeur de pile guest avant la réservation du frame ;
+- la fonction réserve `0x120` octets, puis sauvegarde `x28/x27` à `SP+0xD0` et `x26/x25` à `SP+0xE0` ;
+- donc `x27) sauvegardé à l'entrée se lit à `base-0x48`, et `x25) à `base-0x38`.
+
+Les valeurs lues (`x27 entrée = 0x1800000001`, `x25 entrée = 0x7001759F74`) sont donc bien les sauvegardes des valeurs callee-saved du caller. Elles ne sont pas les valeurs courantes de x27/x25 utilisées par les deux copies. Les valeurs courantes sont corroborées séparément par les champs du contexte généré : `[context+0xD8] = 0x0CE01F2C00` pour x25 et `[context+0xC8] = 0x01490140` pour x27. La structure à `0x11C51F680` est bien la zone de pile guest ; son contenu à l'adresse SP pré-prologue n'est pas censé ressembler à un frame pointer.
 
 ### Ce que le nouveau résultat élimine — et ce qu'il laisse ouvert
 
@@ -309,3 +314,17 @@ Le rapport de comparaison des registres avait appelé `context+0x100` « guest s
 La piste prioritaire devient donc une corruption/réutilisation du bloc de contexte dans le même thread, ou une écriture d'un autre composant runtime non encore identifié. Le point déterminant est maintenant de comparer le bloc `0x1C92EAB0540` à quatre instants : juste avant l'appel guest wrapper, à l'entrée de `rt_dispatch`, à l'entrée du hostfn `memcpy` (`orbitals-recomp.exe+0x40CE0`) et juste avant l'appel au thunk UCRT. Cela dira à quelle frontière `source` et `size` deviennent faux.
 
 Artefact du scan complet : https://github.com/sinedgiveaways/tool/actions/runs/45478450618
+
+
+## Propriétaire de la source et objet guest voisin
+
+L'extraction mémoire déjà présente dans `orbitals_memcpy_runtime_corrige.zip` précise le lien entre le contexte et les objets guest :
+- `[context+0x48] = 0x11C51F6F0` : objet guest local à la pile ;
+- `0x11C51F700 = object+0x10) contient la séquence UTF-16 qui donne exactement le qword source invalide ;
+- `[context+0x98] = 0x0E40012C10` et `[context+0xA8] = 0x0E40012810` : deux autres objets guest liés au contexte ;
+- l'objet `0x0CE01F2C00` (base source attendue x25) contient notamment `[+0x38]=0x0E40012810`, `[+0xD8]=0x00000003FFFFFFFD` (DWORD bas signé -3, DWORD haut 3), `[+0xE0]=0x0000000AFFFFFFFF), `[+0xF0]=3), et `[+0x120]=0x0E40012810) ;
+- l'objet `0x0E40012810` référence en retour `0x0CE01F2C00) à son offset `+0x158), ce qui montre que ces structures sont liées.
+
+Le champ `-3` est donc localisé dans un objet de données réel, mais sa signification reste inconnue. Il ne faut pas le transformer en correctif tant qu'on n'a pas retrouvé son usage dans le code guest.
+
+Le prochain scan étendu doit retrouver tous les pointeurs vers `0x0CE01F2C00`, `0x0E40012810`, `0x0E40012C10`, `0x11C51F6F0) et la source attendue `0x0CE1682D40), puis exporter leurs fenêtres mémoire. Cela permettra d'identifier le propriétaire du buffer et de remonter à l'objet qui fournit l'offset `0x01490140`.
