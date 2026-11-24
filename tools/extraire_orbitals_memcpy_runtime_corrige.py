@@ -247,6 +247,7 @@ def main():
             ("runtime_call_dispatch_1C7ED0E0", dll_base + 0x1C7ED0E0, 0x700),
             ("dll_memcpy_1C7C6F90", dll_base + 0x1C7C6F90, 0x300),
             ("dll_memmove_1C7C6CD0", dll_base + 0x1C7C6CD0, 0x300),
+            ("resolved_memcpy_target_7020002CD0", 0x7020002CD0, 0x400),
             ("exe_copy_helper_40C000", exe_base + 0x40C00, 0x180),
             ("exe_memcpy_thunk_70C400", exe_base + 0x70C400, 0x180),
             ("exe_pre_copy_helper_29FCB0", exe_base + 0x29FCB0, 0x180),
@@ -256,6 +257,8 @@ def main():
             ("dispatch1_flag_global", exe_base + 0x909E40, 0x40),
             ("dispatch1_state_global", exe_base + 0x7183B8, 0x40),
             ("dispatch2_globals", exe_base + 0x1AA0A080, 0x100),
+            ("dll_dispatch_resolver_global", dll_base + 0x1D0744C8, 0x40),
+            ("dll_dispatch_call_global", dll_base + 0x1D0744D8, 0x40),
         ]
         for name, va, length in code_specs + global_specs:
             data = read_virtual(f, ranges, va, length)
@@ -264,6 +267,21 @@ def main():
             else:
                 add_file(files, name + ".bin", data)
                 report.append(f"{name} @ 0x{va:016X} : {len(data)} octets extraits")
+        for name, va in [
+            ("dll_dispatch_resolver_global", dll_base + 0x1D0744C8),
+            ("dll_dispatch_call_global", dll_base + 0x1D0744D8),
+        ]:
+            ptr_data = read_virtual(f, ranges, va, 8)
+            if ptr_data:
+                target = struct.unpack_from("<Q", ptr_data)[0]
+                report.append(f"{name} pointer = 0x{target:016X}")
+                if target:
+                    target_code = read_virtual(f, ranges, target, 0x400)
+                    if target_code:
+                        add_file(files, name + "_target.bin", target_code)
+                        report.append(f"{name} target code @ 0x{target:016X}: 0x400 octets capturés")
+                    else:
+                        report.append(f"{name} target code @ 0x{target:016X}: non capturé")
         report.append("")
 
         # ExceptionStream : ThreadContext est le LocationDescriptor à +0xA0.
@@ -326,6 +344,14 @@ def main():
                         rows.append(f"+0x{off:03X} = 0x{val:016X}")
                     files["exception_rsi_descriptor_qwords.txt"] = ("\n".join(rows)+"\n").encode("utf-8")
                     report.append("Bloc RSI : 0x400 octets capturés.")
+                    # Pointeurs internes au contexte d'import : extraire leurs objets si présents.
+                    for off in [0x98,0xA8,0xB8,0xD0,0xD8,0xE0,0xE8,0x100,0x108,0x118,0x120,0x130,0x138]:
+                        ptr = struct.unpack_from("<Q", desc, off)[0]
+                        if 0x100000000 <= ptr < 0x0000800000000000:
+                            obj = read_virtual(f, ranges, ptr, 0x180)
+                            if obj:
+                                add_file(files, f"descriptor_ptr_{off:03X}_{ptr:016X}.bin", obj)
+                                report.append(f"  pointeur +0x{off:03X} -> 0x{ptr:016X}: 0x180 octets capturés")
                 else:
                     report.append("Bloc RSI : non capturé.")
             if dst_ptr:
@@ -336,7 +362,7 @@ def main():
                 else:
                     report.append("Voisinage destination : non capturé.")
             # Recherche le qword source exact dans les plages mémoire du dump.
-            if src_ptr and src_ptr < 0x0000800000000000:
+            if src_ptr:
                 needle = struct.pack("<Q", src_ptr)
                 source_hits = []
                 with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
