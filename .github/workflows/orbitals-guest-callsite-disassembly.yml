@@ -40,6 +40,7 @@ jobs:
           python -m pip install --disable-pip-version-check capstone
           python tools/nx2/recomp/disasm_fn.py exefs \
             main+0x1759b20 \
+            main+0x1759e8c \
             main+0x175a100 \
             main+0x175a120 \
             main+0x175a130 \
