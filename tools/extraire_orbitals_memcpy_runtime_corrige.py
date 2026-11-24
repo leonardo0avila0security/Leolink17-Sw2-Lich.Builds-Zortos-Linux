@@ -297,6 +297,40 @@ def main():
             report.append("dispatch2 globals block not captured")
         report.append("")
 
+        # Slow-path host lookup table used when the synthetic hostfn PC is outside the fast code range.
+        slow_table_va = exe_base + 0x1A89FF0
+        slow_table = read_virtual(f, ranges, slow_table_va, 0x20000)
+        if slow_table:
+            add_file(files, "dispatch_slow_table.bin", slow_table)
+            key = 0x7020002CD0
+            h = (((key >> 2) * 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF) >> 0x33
+            report.append("[SLOW DISPATCH TABLE LOOKUP FOR 0x7020002CD0]")
+            report.append(f"table=0x{slow_table_va:016X} initial_hash=0x{h:X}")
+            found = False
+            for probe in range(0x2000):
+                idx = (h + probe) & 0x1FFF
+                entry_key, entry_target = struct.unpack_from("<QQ", slow_table, idx*16)
+                if entry_key == key:
+                    report.append(f"found index=0x{idx:X} probe={probe} target=0x{entry_target:016X}")
+                    add_file(files, "dispatch_slow_table_entry.bin", slow_table[idx*16:(idx+1)*16])
+                    target_code = read_virtual(f, ranges, entry_target, 0x600)
+                    if target_code:
+                        add_file(files, "dispatch_slow_resolved_target.bin", target_code)
+                        files["dispatch_slow_resolved_target_addr.txt"] = f"0x{entry_target:016X}\\n".encode("ascii")
+                        report.append("resolved hostfn dispatch target: 0x600 octets captured")
+                    else:
+                        report.append("resolved hostfn dispatch target: not captured")
+                    found = True
+                    break
+                if entry_key == 0:
+                    report.append(f"empty slot at index=0x{idx:X} after {probe} probes; key not found")
+                    break
+            if not found:
+                report.append("hostfn key not found in 0x2000-entry table")
+        else:
+            report.append(f"slow dispatch table not captured at 0x{slow_table_va:016X}")
+        report.append("")
+
         for name, va in [
             ("dll_dispatch_resolver_global", dll_base + 0x1D0744C8),
             ("dll_dispatch_call_global", dll_base + 0x1D0744D8),
