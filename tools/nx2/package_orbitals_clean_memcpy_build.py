@@ -49,6 +49,21 @@ def main():
     runtime_entries[dll_name]=(patched.read_bytes(),zipfile.ZIP_DEFLATED)
     overwritten=sorted(set(entries)&set(runtime_entries))
     entries.update(runtime_entries)
+    # The analysis-data runtime carries the developer PC's setup-state.json, including
+    # the absolute path to the developer's .nup. A clean install must not inherit it:
+    # without this file the launcher's first-run setup asks the player to choose a source.
+    entries.pop("setup-state.json", None)
+    # Require the exact embedded setup runtime and preparation entrypoint expected by launcher.cpp.
+    required = ("setup/python/python.exe", "setup/src/tools/prepare/prepare.py",
+                "setup/src/tools/prepare/nup.py", "orbitals-recomp.exe")
+    missing = [n for n in required if n not in entries]
+    if missing:
+        raise SystemExit(f"Missing launcher preparation dependency: {missing}")
+    exe = entries["orbitals-recomp.exe"][0]
+    if b"setup/python/python.exe" not in exe or b"prepare/prepare.py" not in exe:
+        raise SystemExit("Runtime executable does not contain the expected integrated setup launcher")
+    if "setup-state.json" in entries:
+        raise SystemExit("Stale setup-state.json must not ship in a clean first-run build")
     # The launcher must actually be present; do not silently ship another runtime-only folder.
     launchers=[n for n in entries if Path(n).name.lower() in ("setup.exe","setup.py","setup.bat","setup.cmd")]
     if not launchers:
@@ -66,13 +81,15 @@ def main():
             "This clean package combines the original setup archive (including its setup/NUP selection UI)\n"
             "with the existing runtime archive. The runtime's orbitalgame.dll is replaced by the\n"
             "version-locked candidate patch. Runtime files take precedence for duplicate paths.\n\n"
-            "Extract the complete archive into a NEW, EMPTY folder. Start the original setup launcher\n"
-            "to select the .nup and prepare the game. After setup, launch orbitals-recomp.exe.\n\n"
+            "Extract the complete archive into a NEW, EMPTY folder. The inherited developer setup-state.json\n"
+            "has deliberately been removed so the integrated launcher starts first-run setup and asks you\n"
+            "to select your own .nup. After setup completes, launch orbitals-recomp.exe.\n\n"
             "The candidate DLL has not yet been validated in gameplay. Keep your previous build.\n"
             "No setup/prepare/recompile operation was run during creation of this package.\n"
         ).encode(),compress_type=zipfile.ZIP_DEFLATED)
         z.write(report,a.folder+"/PATCH-REPORT.txt",compress_type=zipfile.ZIP_DEFLATED)
         z.writestr(a.folder+"/BUILD-MANIFEST.txt",(
+            "inherited_setup_state_json=removed (prevents stale absolute .nup path)\n"
             f"setup_archive={setup.name}\nsetup_archive_sha256={sha(setup)}\n"
             f"runtime_archive={runtime.name}\nruntime_archive_sha256={sha(runtime)}\n"
             f"patched_orbitalgame_dll_sha256={sha(patched)}\n"
@@ -93,6 +110,12 @@ def main():
         dlls=[n for n in names if n.startswith(root) and Path(n).name.lower()=="orbitalgame.dll"]
         if len(dlls)!=1 or z.read(dlls[0])!=patched.read_bytes():
             raise SystemExit(f"Patched DLL verification failed: {dlls}")
+        if any(Path(n).name.lower()=="setup-state.json" for n in names):
+            raise SystemExit("Stale setup-state.json leaked into clean package")
+        for required_path in ("setup/python/python.exe", "setup/src/tools/prepare/prepare.py",
+                              "setup/src/tools/prepare/nup.py", "orbitals-recomp.exe"):
+            if root+required_path not in names:
+                raise SystemExit(f"Missing first-run setup dependency: {required_path}")
     print("PACKAGE_OK=1")
     print(f"OUTPUT={out.resolve()}")
     print(f"OUTPUT_SIZE={out.stat().st_size}")
