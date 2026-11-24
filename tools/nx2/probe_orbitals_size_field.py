@@ -64,23 +64,20 @@ def main(path):
    found=0
    for idx in range(count):
     addr=base+idx*0xE8; rec=rv(f,rs,addr,0xE0)
-    if rec is None: continue
-    d8=u32(rec,0xD8); si=s32(d8)
-    # x27 is the selected record. Guest x9 is loaded from [x27+0xD0];
-    # csel chooses x27+0x10 only when that per-record pointer is null.
-    d0=u64(rec,0xD0)
+    if rec is None:
+     print(f"record[{idx}]={addr:#x} NOT_CAPTURED")
+     continue
+    d0=u64(rec,0xD0); d8=u32(rec,0xD8); si=s32(d8)
     chosen=d0 if d0 else addr+0x10
     x8=(chosen+(si<<6))&0xffffffffffffffff
-    val=rv(f,rs,x8-8,8)
-    if val is None: continue
-    d=u64(val)
-    if (d&0xffffffff)==0x01490140 or idx<3:
-     print(f"record[{idx}]={addr:#x} +D0={d0:#x} +D8={d8:#x} signed={si} chosen_base={chosen:#x} x8={x8:#x} [x8-8]={d:#018x}")
-    if (d&0xffffffff)==0x01490140:
+    load_addr=(x8-8)&0xffffffffffffffff
+    val=rv(f,rs,load_addr,8)
+    d=u64(val) if val else None
+    print(f"record[{idx}]={addr:#x} +D0={d0:#x} +D8={d8:#x} signed={si} chosen={chosen:#x} x8={x8:#x} load={load_addr:#x} d0={('not-captured' if d is None else hex(d))}")
+    if load_addr==0x11C51F708 or (d is not None and (d&0xffffffff)==0x01490140):
      found+=1
-     for p in range(0,0xE0,8):
-      print(f"  rec+{p:03x}={u64(rec,p):#018x}")
-   print(f"matching_low32_01490140={found}")
+     print("  *** MATCHES observed size dword / candidate string-buffer address ***")
+   print(f"matching_candidates={found}")
   # Stack evidence: preserve key locals and nearby values around metadata pointer.
   sp=u64(ctx,0x100)-0x120
   print("\n[guest stack locals]")
