@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Assemble a clean full Orbitals runtime folder with the patched game DLL.
+"""Build a clean, setup-capable Orbitals folder from setup.zip + runtime ZIP.
 
-This is a packaging step over the existing analysis-data runtime archive. It does
-not run setup.py/prepare.py, regenerate guest code, or recompile the game.
+The setup archive is the base so its NUP selection/preparation UI remains present.
+The runtime archive overlays matching paths, with the patched orbitalgame.dll.
+All files are placed under one top-level folder for clean extraction.
 """
 from pathlib import Path
 import argparse, hashlib, zipfile
@@ -14,74 +15,95 @@ def sha(path):
             h.update(block)
     return h.hexdigest()
 
+def read_entries(path):
+    result={}
+    with zipfile.ZipFile(path,"r") as z:
+        for info in z.infolist():
+            if info.is_dir(): continue
+            name=info.filename.replace("\\","/").lstrip("/")
+            if not name or name.startswith("../") or "/../" in name:
+                raise SystemExit(f"Unsafe archive path: {info.filename}")
+            result[name]=(z.read(info.filename),info.compress_type)
+    return result
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--source",default="orbitals-recomp.zip")
+    ap.add_argument("--setup-source",default="setup.zip")
     ap.add_argument("--patched-dll",default="orbitalgame.dll")
     ap.add_argument("--patch-report",default="orbitalgame.dll.patch-report.txt")
-    ap.add_argument("--output",default="Orbitals-Recomp-Memcpy-Fix-Candidate.zip")
-    ap.add_argument("--folder",default="Orbitals-Recomp-Memcpy-Fix-Candidate")
+    ap.add_argument("--output",default="Orbitals-Recomp-Memcpy-Fix-Setup-Candidate.zip")
+    ap.add_argument("--folder",default="Orbitals-Recomp-Memcpy-Fix-Setup-Candidate")
     a=ap.parse_args()
-    source=Path(a.source); patched=Path(a.patched_dll); report=Path(a.patch_report)
-    if not source.is_file() or not patched.is_file() or not report.is_file():
-        raise SystemExit("Missing source archive, patched DLL, or patch report")
-    dll_hash=sha(patched)
-    matches=[]
-    with zipfile.ZipFile(source,"r") as zin:
-        for info in zin.infolist():
-            if not info.is_dir() and Path(info.filename).name.lower()=="orbitalgame.dll":
-                matches.append(info.filename)
-        if len(matches)!=1:
-            raise SystemExit(f"Expected exactly one orbitalgame.dll in source archive, found {matches}")
-        dll_path=matches[0]
-        # Write a clean folder tree, preserving the source archive's internal paths.
-        with zipfile.ZipFile(a.output,"w",allowZip64=True) as zout:
-            for info in zin.infolist():
-                data=zin.read(info.filename)
-                if info.filename==dll_path:
-                    data=patched.read_bytes()
-                zout.writestr(info,data)
-            zout.writestr(a.folder+"/README-FIRST.txt",(
-                "ORBITALS RECOMP — MEMCPY CRASH FIX CANDIDATE\n\n"
-                "This is a complete runtime package assembled from the existing analysis-data build.\n"
-                "The orbitalgame.dll inside the original runtime tree has been replaced by the\n"
-                "version-locked candidate patch. All other files are preserved from the source archive.\n\n"
-                "IMPORTANT: this candidate has not yet been validated in gameplay. Keep a backup of\n"
-                "your previous folder. Extract this archive into a NEW, EMPTY folder. Do not merge\n"
-                "it over an existing build.\n\n"
-                "No setup.py, prepare.py, guest-code generation, or game recompilation was run.\n"
-                "See PATCH-REPORT.txt for exact hashes and patch locations.\n"
-            ).encode("utf-8"),compress_type=zipfile.ZIP_DEFLATED)
-            zout.write(report,a.folder+"/PATCH-REPORT.txt")
-            zout.writestr(a.folder+"/BUILD-MANIFEST.txt",(
-                f"source_archive={source.name}\n"
-                f"source_archive_sha256={sha(source)}\n"
-                f"patched_orbitalgame_dll_sha256={dll_hash}\n"
-                f"replaced_archive_path={dll_path}\n"
-                "build_type=existing runtime repackaged with version-locked candidate DLL patch\n"
-                "full_recompiler_build=no\n"
-                "gameplay_validation=pending\n"
-            ).encode("utf-8"),compress_type=zipfile.ZIP_DEFLATED)
-    with zipfile.ZipFile(a.output,"r") as z:
+    runtime=Path(a.source); setup=Path(a.setup_source)
+    patched=Path(a.patched_dll); report=Path(a.patch_report)
+    for f in (runtime,setup,patched,report):
+        if not f.is_file(): raise SystemExit(f"Missing required input: {f}")
+    # Setup first: retain its launcher, UI, NUP chooser and setup scripts.
+    entries=read_entries(setup)
+    setup_names=set(entries)
+    runtime_entries=read_entries(runtime)
+    dll_names=[n for n in runtime_entries if Path(n).name.lower()=="orbitalgame.dll"]
+    if len(dll_names)!=1: raise SystemExit(f"Expected exactly one runtime DLL: {dll_names}")
+    dll_name=dll_names[0]
+    runtime_entries[dll_name]=(patched.read_bytes(),zipfile.ZIP_DEFLATED)
+    overwritten=sorted(set(entries)&set(runtime_entries))
+    entries.update(runtime_entries)
+    # The launcher must actually be present; do not silently ship another runtime-only folder.
+    launchers=[n for n in entries if Path(n).name.lower() in ("setup.exe","setup.py","setup.bat","setup.cmd")]
+    if not launchers:
+        raise SystemExit("setup.zip contains no recognizable setup launcher (setup.exe/.py/.bat/.cmd); refusing to publish")
+    # At least one NUP selection/configuration component should exist in setup archive.
+    setup_candidates=[n for n in setup_names if any(k in Path(n).name.lower() for k in ("setup","nup","select","picker"))]
+    if not setup_candidates:
+        raise SystemExit("setup.zip has no recognizable setup/NUP-selection files; inspect archive before packaging")
+    out=Path(a.output)
+    with zipfile.ZipFile(out,"w",allowZip64=True) as z:
+        for name,(data,ctype) in sorted(entries.items()):
+            z.writestr(a.folder+"/"+name,data,compress_type=ctype)
+        z.writestr(a.folder+"/README-FIRST.txt",(
+            "ORBITALS RECOMP — SETUP + MEMCPY FIX CANDIDATE\n\n"
+            "This clean package combines the original setup archive (including its setup/NUP selection UI)\n"
+            "with the existing runtime archive. The runtime's orbitalgame.dll is replaced by the\n"
+            "version-locked candidate patch. Runtime files take precedence for duplicate paths.\n\n"
+            "Extract the complete archive into a NEW, EMPTY folder. Start the original setup launcher\n"
+            "to select the .nup and prepare the game. After setup, launch orbitals-recomp.exe.\n\n"
+            "The candidate DLL has not yet been validated in gameplay. Keep your previous build.\n"
+            "No setup/prepare/recompile operation was run during creation of this package.\n"
+        ).encode(),compress_type=zipfile.ZIP_DEFLATED)
+        z.write(report,a.folder+"/PATCH-REPORT.txt",compress_type=zipfile.ZIP_DEFLATED)
+        z.writestr(a.folder+"/BUILD-MANIFEST.txt",(
+            f"setup_archive={setup.name}\nsetup_archive_sha256={sha(setup)}\n"
+            f"runtime_archive={runtime.name}\nruntime_archive_sha256={sha(runtime)}\n"
+            f"patched_orbitalgame_dll_sha256={sha(patched)}\n"
+            f"runtime_dll_path={dll_name}\n"
+            f"setup_launchers={';'.join(launchers)}\n"
+            f"setup_nup_files={';'.join(sorted(setup_candidates)[:100])}\n"
+            f"overwritten_duplicate_paths={';'.join(overwritten)}\n"
+            "package_type=setup-capable clean full runtime folder\n"
+            "game_recompilation=not performed\ngameplay_validation=pending\n"
+        ).encode(),compress_type=zipfile.ZIP_DEFLATED)
+    with zipfile.ZipFile(out) as z:
         bad=z.testzip()
-        if bad: raise SystemExit(f"ZIP CRC verification failed: {bad}")
+        if bad: raise SystemExit(f"ZIP CRC failed: {bad}")
         names=z.namelist()
-        if not any(n.endswith("/README-FIRST.txt") for n in names):
-            raise SystemExit("README missing from package")
-        # Confirm exactly one game DLL and it is byte-identical to the patched file.
-        dll_entries=[n for n in names if Path(n).name.lower()=="orbitalgame.dll"]
-        if len(dll_entries)!=1: raise SystemExit(f"Output DLL count mismatch: {dll_entries}")
-        if z.read(dll_entries[0])!=patched.read_bytes():
-            raise SystemExit("Packaged DLL differs from patched DLL")
+        root=a.folder+"/"
+        if not any(n.startswith(root) and Path(n).name.lower() in ("setup.exe","setup.py","setup.bat","setup.cmd") for n in names):
+            raise SystemExit("Packaged setup launcher missing")
+        dlls=[n for n in names if n.startswith(root) and Path(n).name.lower()=="orbitalgame.dll"]
+        if len(dlls)!=1 or z.read(dlls[0])!=patched.read_bytes():
+            raise SystemExit(f"Patched DLL verification failed: {dlls}")
     print("PACKAGE_OK=1")
-    print(f"OUTPUT={Path(a.output).resolve()}")
-    print(f"OUTPUT_SIZE={Path(a.output).stat().st_size}")
-    print(f"OUTPUT_SHA256={sha(a.output)}")
-    print(f"REPLACED_DLL_PATH={dll_path}")
-    print(f"PATCHED_DLL_SHA256={dll_hash}")
+    print(f"OUTPUT={out.resolve()}")
+    print(f"OUTPUT_SIZE={out.stat().st_size}")
+    print(f"OUTPUT_SHA256={sha(out)}")
+    print(f"SETUP_LAUNCHERS={launchers}")
+    print(f"SETUP_NUP_FILES={setup_candidates[:50]}")
+    print(f"OVERWRITTEN_DUPLICATES={overwritten}")
+    print(f"PATCHED_DLL_SHA256={sha(patched)}")
     print("ZIP_CRC=OK")
-    print("DLL_BYTES_MATCH=OK")
-    print("SOURCE_FILES_PRESERVED=YES")
+    print("SETUP_LAUNCHER=OK")
+    print("PATCHED_DLL_BYTES_MATCH=OK")
     print("RECOMPILATION=NOT_PERFORMED")
 
 if __name__=="__main__": main()
