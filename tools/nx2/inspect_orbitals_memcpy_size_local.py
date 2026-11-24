@@ -42,14 +42,7 @@ for ins in md.disasm(d[o:o+0x5000],base+FUNC):
 print("\nRBX-0x98 REFERENCES",*[hex(x) for x in hits],sep="\n")
 for r in hits:
  show(r-0x30,0x80,"local access context")
-# Candidate padding in executable section, same exact bytes required by patcher.
-for name,va,extent,rp,rs,flags in sections:
- if not flags&0x20000000: continue
- raw=d[rp:rp+rs]; i=0
- while i<len(raw):
-  if raw[i]!=0xcc: i+=1; continue
-  j=i+1
-  while j<len(raw) and raw[j]==0xcc:j+=1
-  if j-i>=32:
-   print("CAVE",hex(va+i),hex(rp+i),hex(j-i))
-  i=j
+# Verify the already identified candidate cave only; do not scan the 500 MB .text byte-by-byte.
+cave=0x1C7ED286; co=off(cave,0x17A)
+print("\\nKNOWN_CAVE",hex(cave),"file",hex(co) if co is not None else "not-raw-backed",
+      "all_int3",bool(co is not None and d[co:co+0x17A]==b"\\xCC"*0x17A))
