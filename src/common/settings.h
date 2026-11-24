@@ -453,7 +453,7 @@ struct Values {
         linkage, OcarinaUpscaler::Legacy, "ocarina_upscaler", Category::Renderer,
         Specialization::Default, true, true};
     SwitchableSetting<u32, true> ocarina_custom_input_width{
-        linkage, 1280, 640, 3840, "ocarina_custom_input_width", Category::Renderer,
+        linkage, 1280, 640, 2560, "ocarina_custom_input_width", Category::Renderer,
         Specialization::Countable};
     SwitchableSetting<u32, true> ocarina_custom_input_height{
         linkage, 720, 360, 2160, "ocarina_custom_input_height", Category::Renderer,

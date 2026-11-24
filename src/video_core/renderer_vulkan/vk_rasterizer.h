@@ -6,6 +6,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <optional>
 #include <source_location>
 #include <string_view>
@@ -458,7 +459,7 @@ private:
     bool oot_live_failed{};
     const char* oot_fallback_reason{};
     u32 oot_fallback_repeats{};
-    std::optional<u64> oot_dlss_frame;
+    std::atomic<u64> oot_dlss_frame{~u64{0}};
     std::array<f32, 2> oot_jitter_applied{}; ///< in the viewport state now (render pixels)
     std::array<f32, 2> oot_jitter_offset{};  ///< what oot_jitter_frame's scene draws used
     std::optional<u64> oot_jitter_frame;

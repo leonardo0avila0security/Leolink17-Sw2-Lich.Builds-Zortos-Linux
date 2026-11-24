@@ -3683,8 +3683,11 @@ void RasterizerVulkan::DispatchCompute() {
     }
     const auto replacement_failure =
         replacement ? replacement->EvaluationFailureFlag() : nullptr;
+    const bool replacement_xess = replacement && replacement->UsedXeSS();
+    const u64 replacement_frame = render_trace_frame;
     scheduler.Record([this, pipeline, dim, byte_addressed_shadow, bind = std::move(deferred_bind),
-                      replacement, replacement_failure, barrier_recorded](vk::CommandBuffer cmdbuf) {
+                      replacement, replacement_failure, replacement_xess, replacement_frame,
+                      barrier_recorded](vk::CommandBuffer cmdbuf) {
         if (!barrier_recorded) {
             RecordDispatchBarrier(cmdbuf);
         }
@@ -3694,6 +3697,11 @@ void RasterizerVulkan::DispatchCompute() {
             return;
         }
         if (replacement) {
+            if (replacement_xess) {
+                u64 expected_frame = replacement_frame;
+                oot_dlss_frame.compare_exchange_strong(expected_frame, ~u64{0},
+                                                       std::memory_order_acq_rel);
+            }
             LOG_WARNING(Render_Vulkan, "Ocarina temporal evaluation failed; dispatching native upscaler");
         }
         if (bind) {
@@ -5226,10 +5234,11 @@ void RasterizerVulkan::UpdateOcarinaJitter() {
     // half-size passes and full-screen passes (which keep the depth bound without using it, as
     // #678 found, some with depth writes on: with the test off nothing writes depth) stay put.
     const auto& regs = DrawEngine().regs;
+    const u64 upscale_frame = oot_dlss_frame.load(std::memory_order_acquire);
     if ((oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
          oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess) &&
-        oot_motion.extent.width != 0 && oot_dlss_frame &&
-        *oot_dlss_frame + 1 >= render_trace_frame && regs.depth_test_enable) {
+        oot_motion.extent.width != 0 && upscale_frame != ~u64{0} &&
+        upscale_frame + 1 >= render_trace_frame && regs.depth_test_enable) {
         const auto& targets = texture_cache.GetRenderTargets();
         if (targets.depth_buffer_id) {
             const auto& depth = texture_cache.GetImageView(targets.depth_buffer_id);
@@ -5666,7 +5675,7 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
         logged_contract = true;
         logged_backend = oot_backend;
         logged_dimensions = dimensions;
-        oot_dlss_frame = render_trace_frame;
+        oot_dlss_frame.store(render_trace_frame, std::memory_order_release);
         // AMD's jitter phase count for FSR: 8 * (output / render width)^2, so 18 for 1440p -> 4K
         // and 8 for native AA.
         oot_jitter_phases = std::max(1U, static_cast<u32>(8.0f * log_ratio * log_ratio));
@@ -6072,7 +6081,8 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
     if (!framebuffer_addr) {
         return {};
     }
-    if (oot_dlss_frame == render_trace_frame && oot_live_dlss && oot_live_dlss->UsedXeSS()) {
+    if (oot_dlss_frame.load(std::memory_order_acquire) == render_trace_frame &&
+        oot_live_dlss && oot_live_dlss->UsedXeSS()) {
         scheduler.WaitWorker();
     }
     std::scoped_lock lock{texture_cache.mutex};
@@ -6106,7 +6116,8 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
     info.scaled_height = scaled ? resolution.ScaleUp(info.height) : info.height;
     const bool xess_succeeded = oot_live_dlss && oot_live_dlss->UsedXeSS() &&
                                 oot_live_dlss->EvaluationSucceededThisFrame();
-    const bool replacement_succeeded = oot_dlss_frame == render_trace_frame && oot_live_dlss &&
+    const bool replacement_succeeded =
+        oot_dlss_frame.load(std::memory_order_acquire) == render_trace_frame && oot_live_dlss &&
         !oot_live_dlss->EvaluationFailed() && !oot_live_dlss->EvaluationFailedThisFrame() &&
         (!oot_live_dlss->UsedXeSS() || xess_succeeded);
     info.anti_aliased = replacement_succeeded;
@@ -6116,14 +6127,18 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
         image_view->format == VideoCore::Surface::PixelFormat::A8B8G8R8_UNORM &&
         replacement_succeeded && !frame_dump.Capturing()) {
         try {
-            oot_live_dlss->CompositeOutput(info.image_view, oot_temporal_output_extent,
-                                           render_trace_frame);
-            info.image = oot_live_dlss->CompositedImage();
-            info.image_view = oot_live_dlss->CompositedView();
-            info.scaled_width = oot_temporal_output_extent.width;
-            info.scaled_height = oot_temporal_output_extent.height;
-            info.already_upscaled = true;
+            if (oot_live_dlss->CompositeOutput(info.image_view, oot_temporal_output_extent,
+                                               render_trace_frame)) {
+                info.image = oot_live_dlss->CompositedImage();
+                info.image_view = oot_live_dlss->CompositedView();
+                info.scaled_width = oot_temporal_output_extent.width;
+                info.scaled_height = oot_temporal_output_extent.height;
+                info.already_upscaled = true;
+            }
         } catch (const vk::Exception& error) {
+            if (error.GetResult() == VK_ERROR_DEVICE_LOST) {
+                throw;
+            }
             LOG_WARNING(Render_Vulkan, "Ocarina temporal presentation unavailable: {}", error.what());
             oot_live_failed = true;
             texture_cache_runtime.ocarina_fsr_failed = true; // samplers drop the FSR LOD bias

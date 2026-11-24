@@ -797,7 +797,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         is_intel_windows &&
         properties.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
     const bool enable_intel_discrete_fp16 =
-        is_intel_discrete && EnvFlagSet("EDEN_NX2_INTEL_DISCRETE_FP16", true);
+        is_intel_discrete && EnvFlagSet("EDEN_NX2_INTEL_DISCRETE_FP16", false);
     if (features.shader_float16_int8.shaderFloat16 && is_intel_windows &&
         !enable_intel_discrete_fp16) {
         LOG_WARNING(Render_Vulkan, "{}",
@@ -808,7 +808,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     if (features.shader_float16_int8.shaderFloat16 && enable_intel_discrete_fp16) {
         LOG_INFO(Render_Vulkan,
                  "Intel discrete GPU {} (vendor {:#06x}, device {:#06x}): enabling advertised "
-                 "FP16 arithmetic; set EDEN_NX2_INTEL_DISCRETE_FP16=0 to disable",
+                 "FP16 arithmetic; set EDEN_NX2_INTEL_DISCRETE_FP16=1 to enable",
                  properties.properties.deviceName, properties.properties.vendorID,
                  properties.properties.deviceID);
     }

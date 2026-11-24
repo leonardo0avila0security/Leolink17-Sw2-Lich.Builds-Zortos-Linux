@@ -848,6 +848,7 @@ struct OcarinaUpscaler::Impl {
     vk::Image composite;
     vk::ImageView composite_view;
     VkExtent2D composite_extent{};
+    VkExtent2D composite_failed_extent{};
     std::unique_ptr<OcarinaColorPass> reference_pass;
     std::unique_ptr<OcarinaCompositePass> composite_pass;
     vk::Sampler linear_sampler;
@@ -945,14 +946,18 @@ void OcarinaUpscaler::SaveSceneReference(VkImageView color) {
     state.scheduler.InvalidateState();
 }
 
-void OcarinaUpscaler::CompositeOutput(VkImageView native_composite, VkExtent2D output_extent,
+bool OcarinaUpscaler::CompositeOutput(VkImageView native_composite, VkExtent2D output_extent,
                                       u64 frame) {
     auto& state = *impl;
     if (state.composited_frame == frame) {
-        return;
+        return true;
     }
     if (output_extent.width == 0 || output_extent.height == 0) {
         throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
+    }
+    if (state.composite_failed_extent.width == output_extent.width &&
+        state.composite_failed_extent.height == output_extent.height) {
+        return false;
     }
     if (!state.composite_pass) {
         state.composite_pass = std::make_unique<OcarinaCompositePass>(
@@ -965,11 +970,30 @@ void OcarinaUpscaler::CompositeOutput(VkImageView native_composite, VkExtent2D o
             state.composite_view = {};
             state.composite = {};
         }
+        state.composite_extent = {};
         constexpr VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
-        state.composite = CreateOcarinaImage(state.allocator, output_extent, format,
-                                            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-        state.composite_view = CreateOcarinaView(state.device, *state.composite, format);
-        state.composite_extent = output_extent;
+        try {
+            auto composite = CreateOcarinaImage(
+                state.allocator, output_extent, format,
+                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+            auto composite_view = CreateOcarinaView(state.device, *composite, format);
+            state.composite = std::move(composite);
+            state.composite_view = std::move(composite_view);
+            state.composite_extent = output_extent;
+            state.composite_failed_extent = {};
+        } catch (const vk::Exception& error) {
+            const VkResult result = error.GetResult();
+            if (result != VK_ERROR_OUT_OF_HOST_MEMORY &&
+                result != VK_ERROR_OUT_OF_DEVICE_MEMORY) {
+                throw;
+            }
+            state.composite_failed_extent = output_extent;
+            LOG_WARNING(Render_Vulkan,
+                        "Ocarina temporal composite allocation failed for {}x{}: {}; "
+                        "using native presentation",
+                        output_extent.width, output_extent.height, error.what());
+            return false;
+        }
     }
     state.scheduler.RequestOutsideRenderPassOperationContext();
     state.queue.Acquire(state.scheduler, 4);
@@ -992,6 +1016,7 @@ void OcarinaUpscaler::CompositeOutput(VkImageView native_composite, VkExtent2D o
                                  execution_failed);
     state.scheduler.InvalidateState();
     state.composited_frame = frame;
+    return true;
 }
 
 void OcarinaUpscaler::SaveEffectsBase(VkImageView scene, VkExtent2D extent, u64 frame) {
