@@ -469,6 +469,11 @@ jobs:
               out += ["", f"=== dispatch2 resolved memcpy target 0x{ptr:016X} ==="]
               for ins in md.disasm(z.read("dispatch2_resolved_target.bin"), ptr):
                   out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
+          if "dispatch_slow_resolved_target.bin" in z.namelist() and "dispatch_slow_resolved_target_addr.txt" in z.namelist():
+              ptr = int(z.read("dispatch_slow_resolved_target_addr.txt").decode().strip(), 16)
+              out += ["", f"=== slow dispatch resolved hostfn target 0x{ptr:016X} ==="]
+              for ins in md.disasm(z.read("dispatch_slow_resolved_target.bin"), ptr):
+                  out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
           for global_name in ("dll_dispatch_resolver_global", "dll_dispatch_call_global"):
               ptr_file = global_name + ".bin"
               target_file = global_name + "_target.bin"
