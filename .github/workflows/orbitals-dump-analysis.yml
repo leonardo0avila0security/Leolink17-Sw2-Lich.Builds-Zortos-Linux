@@ -1,0 +1,321 @@
+name: orbitals-dump-analysis
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-dump-analysis.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Download the exact dump asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/orbitals-dump"
+          cd "$RUNNER_TEMP/orbitals-dump"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output dump.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.exe.16952.dmp.zip"
+          echo "1046109831d1fa9451e3d8a047bbb07fd286a289c12035bebaf786f7b51f7dbd  dump.zip" | sha256sum --check
+          echo "Archive:"
+          ls -lh dump.zip
+          unzip -Z1 dump.zip
+          mkdir extracted
+          unzip -q dump.zip -d extracted
+          rm dump.zip
+          find extracted -type f -printf '%p %s bytes\n'
+          DUMP="$(find extracted -type f \( -iname '*.dmp' -o -iname '*.mdmp' \) -print -quit)"
+          if [ -z "$DUMP" ]; then
+            echo "No .dmp/.mdmp member found in archive"
+            exit 2
+          fi
+          echo "$DUMP" > "$RUNNER_TEMP/orbitals-dump/dump-path.txt"
+          df -h "$RUNNER_TEMP"
+
+      - name: Install disassembler
+        run: python -m pip install --disable-pip-version-check capstone
+
+      - name: Parse exception, threads, modules, memory and stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          DUMP="$(cat "$RUNNER_TEMP/orbitals-dump/dump-path.txt")"
+          python - "$DUMP" "$GITHUB_WORKSPACE/report.txt" <<'PY'
+          import bisect, mmap, os, struct, sys, uuid
+          from pathlib import Path
+
+          path, report_path = sys.argv[1:3]
+          out = []
+          def p(s=""): out.append(str(s))
+          def hx(v): return f"0x{v:016x}"
+          def u32(b, o): return struct.unpack_from("<I", b, o)[0]
+          def user(v): return 0x10000 <= v < 0x800000000000
+          def parse_record(b, o):
+              code, flags, nested, address, count, _ = struct.unpack_from("<IIQQII", b, o)
+              params = list(struct.unpack_from("<15Q", b, o + 32))[:min(count, 15)]
+              return {"code":code, "flags":flags, "nested":nested, "address":address,
+                      "count":count, "params":params}
+          CODE_NAMES = {
+              0x80000001:"GUARD_PAGE", 0x80000002:"DATATYPE_MISALIGNMENT",
+              0x80000003:"BREAKPOINT", 0x80000004:"SINGLE_STEP",
+              0xC0000005:"ACCESS_VIOLATION", 0xC0000006:"IN_PAGE_ERROR",
+              0xC000001D:"ILLEGAL_INSTRUCTION", 0xC0000025:"NONCONTINUABLE",
+              0xC000008C:"ARRAY_BOUNDS", 0xC0000094:"INTEGER_DIVIDE_BY_ZERO",
+              0xC00000FD:"STACK_OVERFLOW", 0xC0000374:"HEAP_CORRUPTION",
+              0xC0000409:"STACK_BUFFER_OVERRUN/FAIL_FAST",
+              0xC000041D:"FATAL_USER_CALLBACK", 0xE06D7363:"C++_EXCEPTION"
+          }
+          ACCESS = {0:"READ", 1:"WRITE", 8:"EXECUTE"}
+          with open(path, "rb") as f:
+              b = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+              if b[:4] != b"MDMP":
+                  raise SystemExit(f"Not a Windows minidump: {b[:4]!r}")
+              sig, version, nstreams, dir_rva, checksum, timestamp, flags = struct.unpack_from("<4sIIIIIQ", b, 0)
+              streams = {}
+              for i in range(nstreams):
+                  kind, size, rva = struct.unpack_from("<III", b, dir_rva + i*12)
+                  streams.setdefault(kind, (rva, size))
+              p(f"FILE: {path}")
+              p(f"SIZE: {len(b):,} bytes")
+              p(f"MINIDUMP: version={version:#x} streams={nstreams} timestamp={timestamp} flags={flags:#x}")
+              p("STREAMS: " + ", ".join(f"{k}:{v[1]}B" for k,v in sorted(streams.items())))
+
+              # System information
+              if 7 in streams:
+                  at, _ = streams[7]
+                  arch = struct.unpack_from("<H", b, at)[0]
+                  major, minor, build = struct.unpack_from("<III", b, at+8)
+                  p(f"SYSTEM: architecture={arch} (9=AMD64, 12=ARM64), Windows={major}.{minor}.{build}")
+
+              # Loaded modules and CodeView/PDB identities
+              modules = []
+              if 4 in streams:
+                  at, _ = streams[4]
+                  count = u32(b, at)
+                  p(f"\nMODULES: {count}")
+                  for i in range(count):
+                      o = at + 4 + i*108
+                      base, size, checksum, ts, name_rva = struct.unpack_from("<QIIII", b, o)
+                      nbytes = u32(b, name_rva)
+                      name = b[name_rva+4:name_rva+4+nbytes].decode("utf-16-le","replace")
+                      cvsize, cvrva = struct.unpack_from("<II", b, o+76)
+                      pdb = ""
+                      if cvsize >= 24 and cvrva and b[cvrva:cvrva+4] == b"RSDS":
+                          guid = uuid.UUID(bytes_le=bytes(b[cvrva+4:cvrva+20]))
+                          age = u32(b, cvrva+20)
+                          pdbpath = bytes(b[cvrva+24:cvrva+cvsize]).split(b"\0",1)[0].decode("utf-8","replace")
+                          pdb = f" PDB={pdbpath} GUID={guid} age={age}"
+                      item = {"base":base,"size":size,"name":name.replace("\\\\","/").split("/")[-1]}
+                      modules.append(item)
+                      p(f"  {item['name']}: base={hx(base)} size={size:#x}{pdb}")
+
+              def module_of(addr):
+                  for m in modules:
+                      if m["base"] <= addr < m["base"] + m["size"]:
+                          return f"{m['name']}+{addr-m['base']:#x}"
+                  return "not in a loaded module"
+
+              # Virtual-address memory ranges
+              segs = []
+              if 5 in streams:
+                  at, _ = streams[5]
+                  count = u32(b, at)
+                  for i in range(count):
+                      start, size, rva = struct.unpack_from("<QII", b, at+4+i*16)
+                      if size: segs.append((start,size,rva))
+              if 9 in streams:
+                  at, _ = streams[9]
+                  count, rva = struct.unpack_from("<QQ", b, at)
+                  for i in range(count):
+                      start, size = struct.unpack_from("<QQ", b, at+16+i*16)
+                      if size: segs.append((start,size,rva))
+                      rva += size
+              segs.sort()
+              starts = [x[0] for x in segs]
+              def memread(addr, size):
+                  result = bytearray()
+                  end = addr + size
+                  while addr < end:
+                      i = bisect.bisect_right(starts, addr)-1
+                      if i < 0: return b""
+                      s, n, r = segs[i]
+                      if not (s <= addr < s+n): return b""
+                      take = min(end, s+n)-addr
+                      result += b[r+addr-s:r+addr-s+take]
+                      addr += take
+                  return bytes(result)
+              p(f"\nMEMORY: {len(segs)} captured ranges")
+
+              # MemoryInfo map helps classify executable addresses.
+              regions = []
+              if 16 in streams:
+                  at, _ = streams[16]
+                  header, entry, count = struct.unpack_from("<IIQ", b, at)
+                  for i in range(count):
+                      o = at + header + i*entry
+                      base, allocbase, allocprot = struct.unpack_from("<QQI", b, o)
+                      size = struct.unpack_from("<Q", b, o+24)[0]
+                      state, protect, typ = struct.unpack_from("<III", b, o+32)
+                      regions.append((base,size,state,protect))
+              def committed(addr):
+                  return any(x <= addr < x+n and state == 0x1000 for x,n,state,prot in regions)
+
+              # Threads and optional names
+              names = {}
+              if 24 in streams:
+                  at, size = streams[24]
+                  count = u32(b, at)
+                  entry = 16 if count and size >= 4+16*count else 12
+                  for i in range(count):
+                      tid, nrva = struct.unpack_from("<IQ", b, at+4+i*entry)
+                      if nrva:
+                          nbytes = u32(b,nrva)
+                          names[tid] = b[nrva+4:nrva+4+nbytes].decode("utf-16-le","replace")
+              threads = []
+              if 3 in streams:
+                  at, _ = streams[3]
+                  count = u32(b, at)
+                  for i in range(count):
+                      tid, susp, pc, pri, teb, stack, stack_size, stack_rva, ctx_size, ctx_rva = struct.unpack_from("<IIIIQQIIII", b, at+4+i*48)
+                      threads.append({"tid":tid,"teb":teb,"stack":stack,"stack_size":stack_size,
+                                      "stack_rva":stack_rva,"ctx_size":ctx_size,"ctx_rva":ctx_rva})
+              p(f"\nTHREADS: {len(threads)}")
+              for t in threads:
+                  p(f"  tid={t['tid']} name={names.get(t['tid'],'')} stack={hx(t['stack'])}+{t['stack_size']:#x}")
+
+              def context(off):
+                  if not off or off+0x100 > len(b): return None
+                  flags, mxcsr, cs = struct.unpack_from("<IIH", b, off+0x30)
+                  ss, eflags = struct.unpack_from("<HI", b, off+0x42)
+                  regs = dict(zip(("rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi","r8","r9","r10","r11","r12","r13","r14","r15"),
+                                  struct.unpack_from("<16Q", b, off+0x78)))
+                  regs["rip"] = struct.unpack_from("<Q", b, off+0xF8)[0]
+                  return {"flags":flags,"mxcsr":mxcsr,"cs":cs,"ss":ss,"eflags":eflags,"regs":regs}
+
+              # Exception stream
+              exc = None
+              if 6 in streams:
+                  at, _ = streams[6]
+                  tid = u32(b, at)
+                  rec = parse_record(b, at+8)
+                  ctx_size, ctx_rva = struct.unpack_from("<II", b, at+160)
+                  ctx = context(ctx_rva) if ctx_size else None
+                  exc = {"tid":tid,"record":rec,"context":ctx}
+                  p(f"\nEXCEPTION STREAM: thread={tid} code={rec['code']:#010x} {CODE_NAMES.get(rec['code'],'UNKNOWN')}")
+                  p(f"  exception address={hx(rec['address'])} ({module_of(rec['address'])}) flags={rec['flags']:#x}")
+                  if rec["code"] in (0xC0000005,0xC0000006) and len(rec["params"]) >= 2:
+                      p(f"  access={ACCESS.get(rec['params'][0],rec['params'][0])} target={hx(rec['params'][1])}")
+                  elif rec["params"]:
+                      p("  parameters=" + " ".join(hx(x) for x in rec["params"]))
+                  if ctx:
+                      regs = ctx["regs"]
+                      p(f"  CONTEXT: RIP={hx(regs['rip'])} ({module_of(regs['rip'])}) RSP={hx(regs['rsp'])} RBP={hx(regs['rbp'])}")
+                      p(f"  CS={ctx['cs']:#x} SS={ctx['ss']:#x} EFLAGS={ctx['eflags']:#x} MXCSR={ctx['mxcsr']:#x} flags={ctx['flags']:#x}")
+                      for row in (("rax","rcx","rdx","rbx"),("rsi","rdi","r8","r9"),("r10","r11","r12","r13"),("r14","r15","rsp","rbp")):
+                          p("  " + " ".join(f"{r.upper()}={hx(regs[r])}" for r in row))
+
+                      # Decode the faulting x64 instructions directly from captured memory.
+                      try:
+                          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+                          code = memread(regs["rip"], 96)
+                          if code:
+                              p("\nDISASSEMBLY AT RIP:")
+                              md = Cs(CS_ARCH_X86, CS_MODE_64)
+                              for ins in md.disasm(code, regs["rip"], 16):
+                                  p(f"  => {ins.address:#018x}: {ins.mnemonic:8} {ins.op_str}")
+                          else:
+                              p("\nDISASSEMBLY: faulting RIP bytes not captured in dump")
+                      except Exception as e:
+                          p(f"\nDISASSEMBLY ERROR: {e}")
+
+                      # Stack pointers that resolve into loaded modules.
+                      thread = next((t for t in threads if t["tid"] == tid), None)
+                      if thread:
+                          if thread["stack_rva"]:
+                              stack_data = b[thread["stack_rva"]:thread["stack_rva"]+thread["stack_size"]]
+                          else:
+                              stack_data = memread(thread["stack"], thread["stack_size"])
+                          p(f"\nFAULTING THREAD STACK: {len(stack_data):,} captured bytes")
+                          rsp = regs["rsp"]
+                          if stack_data and thread["stack"] <= rsp < thread["stack"]+len(stack_data):
+                              start = rsp-thread["stack"]
+                              shown = 0
+                              for off in range(start, min(len(stack_data)-7,start+0x1000), 8):
+                                  val = struct.unpack_from("<Q",stack_data,off)[0]
+                                  where = module_of(val)
+                                  if where != "not in a loaded module":
+                                      p(f"  [RSP+{off-start:#05x}] {hx(val)} {where}")
+                                      shown += 1
+                                      if shown >= 48: break
+                          else:
+                              p("  RSP is outside the captured stack range")
+
+                          # Search stack for a real SEH exception record/context hidden behind a fail-fast.
+                          codes = set(CODE_NAMES)
+                          records = []
+                          contexts = []
+                          for off in range(0, max(0,len(stack_data)-0x98+1), 8):
+                              code = struct.unpack_from("<I",stack_data,off)[0]
+                              if code not in codes: continue
+                              try: r = parse_record(stack_data,off)
+                              except Exception: continue
+                              if r["flags"] >> 8 or r["count"] > 15 or not user(r["address"]): continue
+                              if r["code"] == 0xC0000005 and (r["count"] < 2 or r["params"][0] not in ACCESS): continue
+                              records.append((off,r))
+                          for off in range(0, max(0,len(stack_data)-0x4d0+1), 8):
+                              try:
+                                  flags = struct.unpack_from("<I",stack_data,off+0x30)[0]
+                                  if not (flags & 0x00100000) or flags & ~0xFC10007F or flags & 3 != 3: continue
+                                  cs = struct.unpack_from("<H",stack_data,off+0x34)[0]
+                                  ss, eflags = struct.unpack_from("<HI",stack_data,off+0x42)
+                                  mxcsr = struct.unpack_from("<I",stack_data,off+0x34)[0]
+                                  regs = dict(zip(("rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi","r8","r9","r10","r11","r12","r13","r14","r15"),
+                                                  struct.unpack_from("<16Q",stack_data,off+0x78)))
+                                  regs["rip"] = struct.unpack_from("<Q",stack_data,off+0xf8)[0]
+                                  if cs != 0x33 or ss != 0x2b or not (eflags & 2) or not user(regs["rsp"]): continue
+                                  contexts.append((off,regs))
+                              except Exception: pass
+                          pairs = []
+                          for ro, r in records:
+                              for co, regs2 in contexts:
+                                  if regs2["rip"] == r["address"]:
+                                      pairs.append((ro,r,co,regs2))
+                          p(f"\nSTACK SEH SCAN: {len(records)} exception-record candidates, {len(contexts)} context candidates, {len(pairs)} paired")
+                          for ro,r,co,regs2 in pairs[:8]:
+                              p(f"  stack+{ro:#x}: {r['code']:#010x} {CODE_NAMES.get(r['code'],'UNKNOWN')} RIP={hx(regs2['rip'])} ({module_of(regs2['rip'])})")
+                              if r["code"] in (0xC0000005,0xC0000006) and len(r["params"]) >= 2:
+                                  p(f"    {ACCESS.get(r['params'][0],r['params'][0])} {hx(r['params'][1])}")
+                              p(f"    CONTEXT stack+{co:#x} RSP={hx(regs2['rsp'])}")
+              else:
+                  p("\nNO EXCEPTION STREAM in this dump")
+
+              # If exception context missing, list per-thread context RIPs.
+              if not exc or not exc.get("context"):
+                  p("\nTHREAD CONTEXTS:")
+                  for t in threads:
+                      c = context(t["ctx_rva"]) if t["ctx_size"] else None
+                      if c:
+                          p(f"  tid={t['tid']} RIP={hx(c['regs']['rip'])} ({module_of(c['regs']['rip'])}) RSP={hx(c['regs']['rsp'])}")
+
+              Path(report_path).write_text("\n".join(out)+"\n", encoding="utf-8")
+              print("\n".join(out))
+              b.close()
+          PY
+
+      - name: Upload text report only (never the dump)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-dump-analysis
+          path: report.txt
+          if-no-files-found: warn
+          retention-days: 14
