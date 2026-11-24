@@ -479,7 +479,7 @@ jobs:
               out += ["", f"=== memcpy hostfn slot function 0x{ptr:016X} ==="]
               for ins in md.disasm(z.read("hostfn_memcpy_slot_function.bin"), ptr):
                   out.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
-          for helper_name in ("hostfn_nonblocking_call_wrapper", "hostfn_blocking_call_wrapper"):
+          for helper_name in ("hostfn_call_wrappers_context",):
               bin_name = helper_name + ".bin"
               addr_name = helper_name + "_addr.txt"
               if bin_name in z.namelist() and addr_name in z.namelist():
