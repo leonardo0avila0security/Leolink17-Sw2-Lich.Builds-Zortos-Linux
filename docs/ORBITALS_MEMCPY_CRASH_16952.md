@@ -250,3 +250,33 @@ La correspondance des registres guest avec les champs sauvegardés est maintenan
 Le dump montre que la destination du deuxième appel est correcte, mais que les deux autres champs lus par le helper sont `source=0x01460149013D0140` et `size=0x05240500`. Le source invalide est une valeur de données (présente à `0x11C51F700`), et la taille correspond à aucune des deux tailles attendues (`0x01490140` pour le premier appel ou `4` pour le second).
 
 Cela ressemble à une corruption partielle ou à une réutilisation/réentrance du descripteur : le champ destination reflète le deuxième appel, tandis que source et taille reflètent d'autres données. La cause de cette incohérence reste à établir ; le prochain probe recherche toutes les références mémoire au descripteur `0x1C92EAB0540` et à son objet tracker, pas seulement les références dans les piles de threads.
+
+
+## Vérification des mécanismes d'instrumentation et de dispatch (run 45469678070 / artefact 45469700588)
+
+Les flags runtime lus dans le dump exact sont :
+- `impcensus_on = 1`
+- `g_orbitals_entry_probe = 0`
+- `kern_host_track = 0`
+
+Conséquences :
+1. Le probe d'entrée spécial de `f_7001759b20` n'est pas actif dans ce dump. Le saut vers `rt_patch_record_entry` ne peut donc pas expliquer cette panne.
+2. `kern_host_track` étant désactivé, `hostfn_entry` prend le chemin direct vers le pointeur de fonction du slot ; il ne passe pas par `hostfn_tracked`. Le wrapper de suivi de contexte ne réécrit donc pas les arguments de memcpy dans ce cas.
+3. Le chemin profilé du wrapper est bien exécuté parce que `impcensus_on=1`. `fnprof_hit` appelle `impcensus_hit` avec l'identifiant de fonction et le PC de retour. Le code désassemblé de `impcensus_hit` enregistre des clés/compteurs de profiling et, si le mode live est actif, capture des informations de pile. Il ne reçoit pas le pointeur de contexte comme argument et ne contient pas d'écriture vers les champs `context+0`, `+8` ou `+0x10`. `fnprof_hit` conserve le contexte dans un registre non volatile puis le restaure avant de poursuivre le dispatch.
+
+Le pointeur tracker `[context+0x138] = 0x1C92EB90780` a son premier qword à zéro dans les octets déjà capturés. Le test de préemption de `rt_dispatch` lit ce premier qword ; dans cet état capturé, il ne prend donc pas le chemin `dispatch_preempt`.
+
+**Conclusion de cette vérification :** les chemins entry-probe et hostfn tracking sont désactivés ; le profilage `impcensus` est actif mais son code observé n'écrit pas dans les arguments de copie. Il ne faut plus traiter l'entry-probe ou le wrapper `hostfn_tracked` comme suspects principaux. Une corruption concurrente/réutilisation du descripteur, ou une autre écriture entre la préparation du contexte guest et la lecture par le helper, reste à investiguer.
+
+Le probe de références mémoire a aussi trouvé 87 références au descripteur `0x1C92EAB0540`, 11 références au tracker `0x1C92EB90780` et 2 références à l'objet pointé par `context+0x48` (`0x11C51F6F0`). Ces références ne prouvent pas à elles seules un partage concurrent : il faut examiner les fenêtres mémoire autour de chacune pour distinguer les copies de pile, les structures propriétaires et les références actives.
+
+Artefacts :
+- flags et premier scan des références : https://github.com/sinedgiveaways/tool/actions/runs/45471122636
+- comparaison des valeurs de registres sauvegardées : https://github.com/sinedgiveaways/tool/actions/runs/45471415428
+- désassemblage de `fnprof_hit`, `impcensus_hit`, `hostfn_entry`, `hostfn_tracked` : https://github.com/sinedgiveaways/tool/actions/runs/45469700588
+
+## Probe enrichi des propriétaires du descripteur
+
+Le script `tools/nx2/probe_orbitals_memcpy_context.py` a été enrichi pour exporter les fenêtres qword autour de chaque référence mémoire au descripteur, au tracker et à l'objet guest voisin. Il exporte également les 0x200 premiers octets du tracker. Ce probe reste en lecture seule : il ne modifie ni le dump, ni les archives de jeu, ni les sources compilées.
+
+Commit du script : `dc6d642ca5f316236bc6fbdb8f6e422d5c22959b`. Le workflow ciblé correspondant est en cours d'exécution ; ses résultats doivent être ajoutés ici avant de tirer une conclusion sur le partage ou la réutilisation du descripteur.
