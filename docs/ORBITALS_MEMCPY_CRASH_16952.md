@@ -183,3 +183,16 @@ Dans le dump, ces champs valent respectivement `0x0CE01F2C00` et `0x01490140`. L
 Le helper reçoit à la place `0x01460149013D0140`, qui est le contenu trouvé à `0x11C51F700`. Le désaccord est donc encore plus précis : le champ source ne contient ni le pointeur attendu `0x0CE16E2D40`, ni l'adresse du buffer où son contenu a été retrouvé ; il contient les octets de données eux-mêmes. Le workflow `orbitals-memcpy-context-probe` vérifie maintenant si `0x0CE16E2D40` est présent dans les plages mémoire du dump et si le descripteur `0x1C92EAB0540` est référencé depuis les piles d'autres threads.
 
 Le `setup-state.json` inclus dans la release indique le port `0.2.0-g50f4ec8`. Les conclusions de code machine de cette note se rapportent donc aux assets de cette release précise ; ne pas les transposer automatiquement au runtime `0.2.0-g84b2e62` sans vérifier que le dump et ses objets compilés correspondent à ce dernier.
+
+
+## Résultat du probe de contexte (run 45467398410)
+
+Le probe a été exécuté avec succès sur le dump original. Correction arithmétique : `0x0CE01F2C00 + 0x01490140 = 0x0CE1682D40` (et non `0x0CE16E2D40`, qui était une erreur de calcul dans la note précédente).
+
+- Source calculée par le callsite compilé : `0x0CE1682D40`.
+- Cette adresse n'est pas présente dans les plages mémoire capturées du dump. Cela ne prouve pas à elle seule qu'elle n'était pas mappée au runtime ; le dump peut ne pas l'avoir capturée.
+- Le qword source invalide reste présent comme contenu à `0x11C51F700`. Les octets qui suivent forment une séquence de valeurs 16 bits (`0x0140, 0x013D, 0x0149, 0x0146, 0x0140, 0x0149, 0x013A, 0x013B...`) : c'est manifestement une donnée, pas une adresse source exploitable.
+- Le pointeur de contexte `0x1C92EAB0540` apparaît dans la pile du thread fautif `0x5B10` uniquement ; aucune autre pile de thread capturée ne le référence. Cela affaiblit l'hypothèse d'un partage évident de ce même contexte entre plusieurs threads, sans exclure une corruption intra-thread ou une réutilisation de contexte.
+- Le mismatch reste établi : le callsite guest de retour `0x700175A130` doit passer une taille `0` ou `4`, alors que le helper reçoit `0x05240500`. Le source reçu est aussi différent du résultat d'addition attendu `0x0CE1682D40`.
+
+Probe : https://github.com/sinedgiveaways/tool/actions/runs/45467398410
