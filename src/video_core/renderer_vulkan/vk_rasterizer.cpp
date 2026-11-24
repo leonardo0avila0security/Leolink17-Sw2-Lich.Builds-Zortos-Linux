@@ -5661,7 +5661,7 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
             extent.width, extent.height, output_extent.width, output_extent.height,
             window_extent.width, window_extent.height, xess_output.width, xess_output.height,
         };
-        const bool contract_changed = !logged_contract || logged_backend != oot_backend ||
+        const bool contract_changed = !logged_contract || logged_backend != *oot_backend ||
                                       logged_dimensions != dimensions;
         const bool trace_frame = trace_contract && logged_contract_frame != render_trace_frame;
         if (contract_changed || trace_frame) {
@@ -5673,7 +5673,7 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
         }
         logged_contract_frame = render_trace_frame;
         logged_contract = true;
-        logged_backend = oot_backend;
+        logged_backend = *oot_backend;
         logged_dimensions = dimensions;
         oot_dlss_frame.store(render_trace_frame, std::memory_order_release);
         // AMD's jitter phase count for FSR: 8 * (output / render width)^2, so 18 for 1440p -> 4K
