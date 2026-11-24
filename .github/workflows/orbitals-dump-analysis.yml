@@ -106,6 +106,7 @@ jobs:
           PDB="build-assets/matching-symbols/orbitals-recomp/orbitalgame.dll.pdb"
           test -s "$PDB"
           llvm-pdbutil dump -summary "$PDB" > pdb-summary.txt
+          llvm-pdbutil dump -section-headers "$PDB" > pdb-section-headers.txt
           llvm-pdbutil dump -publics -symbols "$PDB" > pdb-all-symbols.txt
           python - <<'PY'
           from pathlib import Path
@@ -516,6 +517,7 @@ jobs:
             fault-memory-analysis.txt
             runtime-dispatch-targets.txt
             pdb-summary.txt
+            pdb-section-headers.txt
             pdb-symbol-context.txt
             build-assets/asset-inventory.txt
             build-assets/extracted-symbol-files.txt
