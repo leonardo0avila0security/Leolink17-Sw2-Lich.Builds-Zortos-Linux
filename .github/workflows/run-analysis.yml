@@ -1,0 +1,56 @@
+name: run-analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_sub:
+        description: 'motif du nom d asset minidump'
+        default: 'dmp'
+      sp:
+        description: 'guest sp a l abort (hex)'
+        default: '1183f9e00'
+      frames:
+        description: 'offsets de frame connus (hex, sep espaces)'
+        default: '10a0 1f9878 181cc8 b9214 175a16c 1750b88 1750650 1718cf8 1d77d64 16198b4'
+      spans:
+        description: 'fenetres start:end (hex, sep espaces)'
+        default: '181b00:181d10 175a100:175a250 1750b00:1750c00 1750600:17506e0 1718c80:1718d40 1d77d00:1d77dc0 1619880:16198e0 bf030:bf070 1c690:1c6d0 b9180:b91f0'
+
+permissions:
+  contents: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download minidump from release analysis-data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir dl
+          gh release download analysis-data --repo "$GITHUB_REPOSITORY" --pattern "*${{ inputs.asset_sub }}*" --clobber --dir dl
+          ls -la dl
+
+      - name: Unzip
+        run: |
+          cd dl
+          for z in *.zip; do unzip -o "$z"; done
+          DMP=$(find . -type f -name '*.dmp' | head -1)
+          echo "DMP=$DMP" >> "$GITHUB_ENV"
+          test -n "$DMP"
+
+      - name: Extract spans
+        run: |
+          python3 tools/analyze.py --dmp "$DMP" --sp "${{ inputs.sp }}" --frames "${{ inputs.frames }}" --spans "${{ inputs.spans }}" --out analysis
+          head -40 analysis/main-base.txt
+
+      - name: Commit results
+        run: |
+          git config user.name analysis-bot
+          git config user.email actions@github.com
+          git add analysis
+          git commit -m "analysis results (run ${{ github.run_id }})" || echo rien
+          git push
