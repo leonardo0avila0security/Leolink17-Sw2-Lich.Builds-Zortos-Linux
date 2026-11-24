@@ -241,6 +241,9 @@ def main():
             ("caller_main_1B5A9300", dll_base + 0x1B5A9300, 0x240),
             ("wrapper_1C11DEE0", dll_base + 0x1C11DEE0, 0x240),
             ("wrapper_internal_1C11DF00", dll_base + 0x1C11DF00, 0x240),
+            ("exe_copy_helper_40C000", exe_base + 0x40C00, 0x180),
+            ("exe_memcpy_thunk_70C400", exe_base + 0x70C400, 0x180),
+            ("exe_pre_copy_helper_29FCB0", exe_base + 0x29FCB0, 0x180),
         ]
         # Données référencées par les dispatchers observés dans le premier ZIP.
         global_specs = [
