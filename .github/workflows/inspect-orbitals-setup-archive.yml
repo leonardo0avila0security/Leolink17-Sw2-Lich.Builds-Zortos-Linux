@@ -1,4 +1,4 @@
-name: inspect-orbitals-setup-archives
+name: inspect-orbitals-runtime-setup-contract
 on:
   push:
     branches:
@@ -11,31 +11,26 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
-      - name: Download exact archives
-        run: |
-          curl -fL --retry 3 -o setup.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup.zip"
-          curl -fL --retry 3 -o orbitals-recomp.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
-      - name: Verify runtime launcher setup dependencies
+      - name: Download runtime
+        run: curl -fL --retry 3 -o runtime.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
+      - name: Inspect executable setup strings
         run: |
           python - <<'PY'
-          import zipfile
-          for archive in ("setup.zip","orbitals-recomp.zip"):
-              print("\\n===== "+archive+" =====")
-              with zipfile.ZipFile(archive) as z:
-                  names=z.namelist()
-                  for n in names:
-                      low=n.lower()
-                      base=n.rsplit("/",1)[-1].lower()
-                      if (base in ("python.exe","pythonw.exe","python314.dll","python3.dll","orbitals-recomp.exe","setup-state.json","orbitals.ini","prepare.py","setup.py","setup.exe","readme.md","pyproject.toml")
-                          or n.count("/")<=1):
-                          print(n, z.getinfo(n).file_size)
-                  print("TOTAL_FILES",len(names))
-                  if archive=="setup.zip":
-                      for n in ("setup/src/tools/prepare/prepare.py","setup/src/tools/prepare/gamesource.py","setup/src/tools/prepare/machine.py"):
-                          if n in names:
-                              data=z.read(n).decode("utf-8",errors="replace")
-                              print("\\n===== "+n+" (tail) =====")
-                              print(data[-10000:])
+          import zipfile, re
+          with zipfile.ZipFile("runtime.zip") as z:
+              print("ROOTS",sorted({n.split("/",1)[0] for n in z.namelist()}))
+              for n in z.namelist():
+                  if n.lower().endswith("orbitals-recomp.exe"):
+                      data=z.read(n)
+                      print("EXE",n,"SIZE",len(data))
+                      for enc in ("ascii","utf-16le"):
+                          txt=data.decode(enc,errors="ignore")
+                          for term in ("prepare.py","setup/python","setup-state.json","--source","source", "NUP", "Select game"):
+                              hits=[m.start() for m in re.finditer(re.escape(term),txt,re.I)]
+                              if hits: print(enc,term,[(txt[max(0,i-120):i+240]).replace("\\x00"," ") for i in hits[:5]])
+                      break
+              print("ROOT FILES")
+              for n in z.namelist():
+                  if n.count("/")<=1: print(n,z.getinfo(n).file_size)
           PY
