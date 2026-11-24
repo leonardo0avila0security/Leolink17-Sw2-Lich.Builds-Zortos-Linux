@@ -28,18 +28,13 @@ jobs:
           DUMP="$(find dump -type f -iname '*.dmp' -print -quit)"
           test -n "$DUMP"
           echo "DUMP=$DUMP" >> "$GITHUB_ENV"
-      - name: Reconstruct x27 record and d0 load
-        run: |
-          python tools/nx2/probe_orbitals_guest_table.py "$DUMP" | tee guest-size-origin.txt
-      - name: Validate candidate owner and exact size field
+      - name: Validate guest array owner and exact size field
         run: |
           python tools/nx2/probe_orbitals_size_field.py "$DUMP" | tee guest-size-field-owner.txt
-      - name: Upload guest size origin reports
+      - name: Upload guest size origin report
         uses: actions/upload-artifact@v7
         with:
           name: orbitals-guest-memcpy-size-origin
-          path: |
-            guest-size-origin.txt
-            guest-size-field-owner.txt
+          path: guest-size-field-owner.txt
           if-no-files-found: error
           retention-days: 14
