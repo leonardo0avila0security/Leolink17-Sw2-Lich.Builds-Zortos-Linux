@@ -19,6 +19,52 @@ jobs:
       - name: Checkout analysis tools
         uses: actions/checkout@v4
 
+      - name: Download and inventory matching build assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-assets
+          cd build-assets
+          for name in orbitals-recomp.zip setup-work.zip setup.zip exefs.zip sm86.zip; do
+            echo "Downloading $name"
+            curl --fail --location --retry 3 --retry-all-errors --output "$name" "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/$name"
+            ls -lh "$name"
+          done
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, BadZipFile
+          import re
+          root = Path(".")
+          out = []
+          extracted = Path("matching-symbols")
+          extracted.mkdir(exist_ok=True)
+          wanted = re.compile(r"\.(pdb|map|sym|rsp|json|nso|nro|nup|elf|toml|ya?ml)$", re.I)
+          for archive in sorted(root.glob("*.zip")):
+              out += [f"\n===== {archive.name} ====="]
+              try:
+                  with ZipFile(archive) as z:
+                      infos = z.infolist()
+                      out.append(f"entries={len(infos)} uncompressed={sum(x.file_size for x in infos):,} bytes")
+                      for info in infos:
+                          if info.is_dir():
+                              continue
+                          out.append(f"{info.file_size:>12}  {info.filename}")
+                          if wanted.search(info.filename):
+                              # Extract symbol/build metadata only; do not unpack game payloads wholesale.
+                              target = extracted / archive.stem / info.filename
+                              target.parent.mkdir(parents=True, exist_ok=True)
+                              target.write_bytes(z.read(info))
+              except BadZipFile as e:
+                  out.append(f"BAD ZIP: {e}")
+          Path("asset-inventory.txt").write_text("\n".join(out)+"\n", encoding="utf-8")
+          print("\n".join(out))
+          PY
+          cd matching-symbols
+          find . -type f -printf '%p %s bytes\n' | sort > ../extracted-symbol-files.txt
+          cd ..
+          zip -qr matching-symbols.zip matching-symbols extracted-symbol-files.txt
+          df -h .
+
       - name: Download the exact dump asset
         shell: bash
         run: |
@@ -390,5 +436,8 @@ jobs:
             report.txt
             orbitals_memcpy_runtime_corrige.zip
             runtime-disassembly.txt
+            build-assets/asset-inventory.txt
+            build-assets/extracted-symbol-files.txt
+            build-assets/matching-symbols.zip
           if-no-files-found: warn
           retention-days: 14
