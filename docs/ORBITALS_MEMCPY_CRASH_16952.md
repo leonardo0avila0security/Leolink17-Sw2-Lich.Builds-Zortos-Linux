@@ -237,3 +237,16 @@ Le désassemblage du vrai objet compilé montre que `f_7001759b20` possède, dè
 Dans le dump, `impcensus_on = 1` : la collecte de profiling est active. Le wrapper de memcpy a également pris son chemin profilé (retour `+0x1C11DF58`). Il reste à vérifier si le marqueur d'entrée de `f_7001759b20` et le flag `g_orbitals_entry_probe` sont actifs. Si oui, l'instrumentation de cette fonction devient le premier suspect à isoler, avant de modifier le code guest.
 
 Cette piste n'établit pas encore que `fnprof_hit` corrompt les arguments : le callback ne reçoit pas directement le pointeur du contexte dans ses arguments standard. Il faut examiner `rt_patch_record_entry` et les valeurs du flag, puis faire un essai contrôlé avec le probe désactivé. Aucun patch de jeu n'est proposé avant cette vérification.
+
+
+## Reconstitution des deux memcpy dans f_7001759b20
+
+La correspondance des registres guest avec les champs sauvegardés est maintenant clarifiée par les instructions du callsite :
+- `[context+0xD8] = x25 = 0x0CE01F2C00` : base source.
+- `[context+0xC8] = x27 = 0x01490140` : offset / taille du premier appel.
+- Le premier appel guest `memcpy(x0, x25, x27)` devait donc copier `0x01490140` octets depuis `0x0CE01F2C00` vers `0x12E05EFECC`.
+- Le deuxième appel guest calcule `dest=x0+x27=0x12E1A8000C`, `source=x25+x27=0x0CE1682D40`, puis `size=x2 & 4 = 4`.
+
+Le dump montre que la destination du deuxième appel est correcte, mais que les deux autres champs lus par le helper sont `source=0x01460149013D0140` et `size=0x05240500`. Le source invalide est une valeur de données (présente à `0x11C51F700`), et la taille correspond à aucune des deux tailles attendues (`0x01490140` pour le premier appel ou `4` pour le second).
+
+Cela ressemble à une corruption partielle ou à une réutilisation/réentrance du descripteur : le champ destination reflète le deuxième appel, tandis que source et taille reflètent d'autres données. La cause de cette incohérence reste à établir ; le prochain probe recherche toutes les références mémoire au descripteur `0x1C92EAB0540` et à son objet tracker, pas seulement les références dans les piles de threads.
