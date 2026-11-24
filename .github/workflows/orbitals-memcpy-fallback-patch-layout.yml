@@ -1,0 +1,45 @@
+name: orbitals-memcpy-fallback-patch-layout
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-memcpy-fallback-patch-layout.yml"
+      - "tools/nx2/analyze_orbitals_memcpy_patch_layout.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout analysis tools
+        uses: actions/checkout@v4
+
+      - name: Download exact matching runtime build
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output orbitals-recomp.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
+          ls -lh orbitals-recomp.zip
+
+      - name: Inspect PE RVAs, exact fallback block and executable code caves
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check capstone
+          python tools/nx2/analyze_orbitals_memcpy_patch_layout.py orbitals-recomp.zip | tee patch-layout-report.txt
+
+      - name: Upload patch layout report
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-memcpy-fallback-patch-layout
+          path: patch-layout-report.txt
+          if-no-files-found: error
+          retention-days: 14
