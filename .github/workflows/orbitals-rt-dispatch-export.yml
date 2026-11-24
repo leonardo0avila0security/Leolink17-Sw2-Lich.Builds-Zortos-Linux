@@ -31,7 +31,7 @@ jobs:
             Path(name).write_bytes(data)
             print(name,len(data))
           PY
-      - name: Resolve rt_dispatch export and disassemble
+      - name: Resolve rt_dispatch and hostfn call bridge
         shell: bash
         run: |
           set -euo pipefail
@@ -41,12 +41,28 @@ jobs:
           llvm-readobj --coff-exports --coff-imports orbitalgame.dll > dll-pe-tables.txt
           grep -ni -C 5 'rt_dispatch' exe-pe-tables.txt dll-pe-tables.txt > rt-dispatch-pe-hits.txt || true
           llvm-objdump -d --demangle --no-show-raw-insn --disassemble-symbols=rt_dispatch orbitals-recomp.exe > rt-dispatch-disassembly.txt || true
+          for spec in \
+            "dispatch_slow:0x140036660:0x140036800" \
+            "dispatch_preempt:0x1400365d0:0x140036660" \
+            "hostfn_dispatch_target:0x140036e50:0x140037050" \
+            "hostfn_call_context_wrapper:0x1400397bc0:0x1400397c80" \
+            "hostfn_context_ref_wrapper:0x1400397c10:0x1400397c80" \
+            "trace_context_helper:0x14002783c0:0x14002784c0" \
+            "trace_logger:0x1400279d90:0x1400279f00"; do
+            IFS=: read -r name start stop <<< "$spec"
+            llvm-objdump -d --demangle --no-show-raw-insn --start-address="$start" --stop-address="$stop" orbitals-recomp.exe > "$name.txt"
+          done
           {
             echo "RT_DISPATCH PE TABLE HITS"
             cat rt-dispatch-pe-hits.txt
             echo
-            echo "RT_DISPATCH SYMBOL DISASSEMBLY"
+            echo "RT_DISPATCH"
             cat rt-dispatch-disassembly.txt
+            for f in dispatch_slow.txt dispatch_preempt.txt hostfn_dispatch_target.txt hostfn_call_context_wrapper.txt hostfn_context_ref_wrapper.txt trace_context_helper.txt trace_logger.txt; do
+              echo
+              echo "===== $f ====="
+              cat "$f"
+            done
           } > rt-dispatch-report.txt
           cat rt-dispatch-report.txt
       - name: Upload dispatch resolution
@@ -59,5 +75,12 @@ jobs:
             exe-pe-tables.txt
             dll-pe-tables.txt
             rt-dispatch-disassembly.txt
+            dispatch_slow.txt
+            dispatch_preempt.txt
+            hostfn_dispatch_target.txt
+            hostfn_call_context_wrapper.txt
+            hostfn_context_ref_wrapper.txt
+            trace_context_helper.txt
+            trace_logger.txt
           if-no-files-found: error
           retention-days: 14
