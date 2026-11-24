@@ -38,7 +38,7 @@ jobs:
             echo "No .dmp/.mdmp member found in archive"
             exit 2
           fi
-          echo "$DUMP" > "$RUNNER_TEMP/orbitals-dump/dump-path.txt"
+          echo "$RUNNER_TEMP/orbitals-dump/$DUMP" > "$RUNNER_TEMP/orbitals-dump/dump-path.txt"
           df -h "$RUNNER_TEMP"
 
       - name: Install disassembler
