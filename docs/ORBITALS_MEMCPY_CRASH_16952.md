@@ -541,3 +541,23 @@ La proximité est notable : le champ source stale du descripteur est égal au qw
 Le prochain probe relève les entrées exactes `x21+0x158 + index*0xE8), le champ `+0xD0/+0xD8), le pointeur `x29-8), l'index `[sp+0xC0]` et la comparaison signée qui décide de la branche. Il doit établir l'adresse effective du chargement qui a produit `0x01490140`.
 
 Rapport de scan : workflow `orbitals-memcpy-size-dword-scan`, run https://github.com/sinedgiveaways/tool/actions/runs/45488518166
+
+
+## Correction de diagnostic : le DWORD de taille n'est pas démontré comme local non initialisé
+
+La relecture du flot AArch64 complet corrige l'hypothèse précédente « local de pile non initialisé ». Cette hypothèse ne doit plus être traitée comme la cause établie.
+
+Le flot exact montre que le code calcule x27 = table_base + sign_extend(w20)*0xE8, charge w8 depuis [x27+0xD8], sélectionne x9 depuis [x27+0xD0] ou x27+0x10, puis calcule x8 = x9 + sign_extend(w8)*0x40. Il lit explicitement 8 octets à [x8-8], copie d0 vers [sp+0x88], puis écrit d8 à [x8-8]. Plus tard, [sp+0x88] est étendu en signé et multiplié par quatre pour former la taille memcpy.
+
+Le DWORD est donc copié explicitement depuis une adresse calculée à partir du record sélectionné et de son champ signé +0xD8. Le store vers [sp+0x88] est exécuté sur le chemin qui atteint le calcul de taille. Le fait que la valeur soit grande ne suffit pas à prouver un local non initialisé : elle peut être une valeur de données incorrecte lue depuis le mauvais record, le mauvais offset, ou un objet dont le layout/durée de vie est incorrect.
+
+Le probe précédent avait aussi une erreur de reconstruction de l'index : il utilisait ctx+0xC0 comme index, alors que cette valeur correspond au pointeur de pile x23 sauvegardé. Le registre x24 est sauvegardé à sp+0xF0, pas à sp+0xC0. Le pointeur d'index-array est chargé depuis [x29-8], et le load d'index utilise l'adresse base + x24*8. Les anciennes conclusions sur w9 obtenues à partir de sp+0xC0 ne sont donc pas fiables.
+
+Un nouveau probe ciblé a été ajouté pour recalculer depuis le dump le vrai x24, le pointeur [x29-8], w20 depuis la paire x23, le record x27, les valeurs w9/w8/w12, l'adresse effective du load [x8-8] et le qword post-écriture (à ne pas confondre automatiquement avec la valeur pré-écriture).
+
+Script : tools/nx2/probe_orbitals_memcpy_branch_exact.py
+Workflow : orbitals-memcpy-branch-exact
+Commit du script : f071ab5200b5d55d93fb306d1b87bf35d427d00c
+Commit du workflow : 4f55d32fcf54aafff57b2d2fb55159da01d0ba74
+
+**État :** probe ajouté sur analysis/recomp-build; son artefact doit être consulté avant de choisir un patch. Aucun patch de la taille n'est appliqué. Le défaut de marshalling source du chemin fallback reste distinct et confirmé, mais ne doit pas être confondu avec la provenance du DWORD de taille.
