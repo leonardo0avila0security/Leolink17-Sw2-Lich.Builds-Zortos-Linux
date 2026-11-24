@@ -31,7 +31,7 @@ jobs:
           unzip -q dump.zip -d extracted
           DUMP="$(find extracted -type f \( -iname '*.dmp' -o -iname '*.mdmp' \) -print -quit)"
           test -n "$DUMP"
-          echo "$DUMP" > "$RUNNER_TEMP/orbitals-dump/path.txt"
+          echo "$RUNNER_TEMP/orbitals-dump/$DUMP" > "$RUNNER_TEMP/orbitals-dump/path.txt"
           ls -lh "$DUMP"
       - name: Probe expected source and context reuse
         shell: bash
