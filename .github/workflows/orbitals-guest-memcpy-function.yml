@@ -23,8 +23,11 @@ jobs:
           curl --fail --location --retry 3 --retry-all-errors \
             --output exefs.zip \
             "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/exefs.zip"
-          mkdir exefs
-          unzip -q exefs.zip -d exefs
+          mkdir unpack exefs
+          unzip -q exefs.zip -d unpack
+          MAIN="$(find unpack -type f -name main -print -quit)"
+          test -n "$MAIN"
+          cp "$MAIN" exefs/main
       - name: Disassemble full guest function
         run: |
           python -m pip install --disable-pip-version-check capstone
