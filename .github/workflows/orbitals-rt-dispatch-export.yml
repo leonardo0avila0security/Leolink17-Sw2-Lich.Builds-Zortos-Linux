@@ -50,7 +50,10 @@ jobs:
             "hostfn_tracked_wrapper:0x140037c10:0x140037c80" \
             "trace_context_helper:0x14002783c0:0x14002784c0" \
             "trace_logger:0x1400279d90:0x1400279f00" \
-            "fnprof_hit_body:0x140020810:0x140020a00"; do
+            "fnprof_hit_body:0x140020810:0x140020a00" \
+            "impcensus_hit_body:0x140020890:0x140020b00" \
+            "rt_patch_record_entry:0x14001d260:0x14001d4b0" \
+            "rt_patch_free_entry:0x14001d4b0:0x14001d680"; do
             IFS=: read -r name start stop <<< "$spec"
             llvm-objdump -d --demangle --no-show-raw-insn --start-address="$start" --stop-address="$stop" orbitals-recomp.exe > "$name.txt"
           done
@@ -63,7 +66,7 @@ jobs:
             echo
             echo "===== fnprof_hit-disassembly.txt ====="
             cat fnprof-hit-disassembly.txt
-            for f in dispatch_slow.txt dispatch_preempt.txt hostfn_dispatch_target.txt hostfn_blocking_wrapper.txt hostfn_tracked_wrapper.txt trace_context_helper.txt trace_logger.txt fnprof_hit_body.txt; do
+            for f in dispatch_slow.txt dispatch_preempt.txt hostfn_dispatch_target.txt hostfn_blocking_wrapper.txt hostfn_tracked_wrapper.txt trace_context_helper.txt trace_logger.txt fnprof_hit_body.txt impcensus_hit_body.txt rt_patch_record_entry.txt rt_patch_free_entry.txt; do
               echo
               echo "===== $f ====="
               cat "$f"
@@ -89,5 +92,8 @@ jobs:
             trace_logger.txt
             fnprof-hit-disassembly.txt
             fnprof_hit_body.txt
+            impcensus_hit_body.txt
+            rt_patch_record_entry.txt
+            rt_patch_free_entry.txt
           if-no-files-found: error
           retention-days: 14
