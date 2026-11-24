@@ -1,0 +1,38 @@
+name: orbitals-memcpy-branch-exact
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-memcpy-branch-exact.yml"
+      - "tools/nx2/probe_orbitals_memcpy_branch_exact.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-branch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact crash dump
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output dump.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.exe.16952.dmp.zip"
+          unzip -q dump.zip -d dump
+          DUMP="$(find dump -type f -iname '*.dmp' -print -quit)"
+          test -n "$DUMP"
+          echo "DUMP=$DUMP" >> "$GITHUB_ENV"
+      - name: Reconstruct exact index, record and pre/post size load
+        run: |
+          python tools/nx2/probe_orbitals_memcpy_branch_exact.py "$DUMP" | tee memcpy-branch-exact.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-memcpy-branch-exact
+          path: memcpy-branch-exact.txt
+          if-no-files-found: error
+          retention-days: 14
