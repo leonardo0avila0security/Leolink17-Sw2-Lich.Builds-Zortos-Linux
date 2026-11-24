@@ -109,7 +109,26 @@ def main(path):
         print(f"THREAD_STACK_REFERENCE_COUNT={len(shared)}")
         # Search all captured memory for references to the host descriptor and its tracker.
         tracker=q(0x138)
-        needles=(("descriptor",rsi),("tracker",tracker),("guest_object",q(0x48)))
+        source_base=q(0xD8)
+        source_offset=q(0xC8)
+        expected_source=(source_base+source_offset)&0xFFFFFFFFFFFFFFFF
+        guest_object=q(0x48)
+        source_container=q(0xD0)
+        aux_98=q(0x98)
+        aux_A8=q(0xA8)
+        needles=(
+            ("descriptor",rsi),("tracker",tracker),("guest_object",guest_object),
+            ("source_base",source_base),("expected_source",expected_source),
+            ("source_container",source_container),("inline_data",guest_object+0x10),
+            ("aux_98",aux_98),("aux_A8",aux_A8)
+        )
+        print(f"SOURCE_BASE={source_base:#x} SOURCE_OFFSET={source_offset:#x} EXPECTED_SOURCE={expected_source:#x}")
+        for label, ptr in (("source_base",source_base),("guest_object",guest_object),
+                           ("source_container",source_container),("aux_98",aux_98),("aux_A8",aux_A8)):
+            if 0x100000000 <= ptr < 0x800000000000:
+                obj=read_virtual(f,rs,ptr,0x200)
+                print(f"TARGET_OBJECT_{label.upper()}={ptr:#x} captured={obj is not None}")
+                if obj is not None: print(f"TARGET_OBJECT_{label.upper()}_HEX={obj.hex()}")
         with mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as mm:
             for label,value in needles:
                 needle=struct.pack("<Q",value)
