@@ -97,6 +97,29 @@ def main(path):
                 if blob and needle in blob: shared.append(t)
         print("THREAD_STACKS_REFERENCING_RSI="+",".join(hex(x) for x in shared))
         print(f"THREAD_STACK_REFERENCE_COUNT={len(shared)}")
+        # Resolve profiling flags used by fnprof_hit in this exact dump.
+        if 4 in ss:
+            mr,ms=ss[4]
+            mcount=u32(f,mr)
+            exe_base=None
+            for i in range(mcount):
+                mo=mr+4+i*108
+                mb=u64(f,mo); mname_rva=u32(f,mo+20)
+                nbytes=u32(f,mname_rva)
+                name=read_at(f,mname_rva+4,nbytes).decode("utf-16-le","replace")
+                if name.lower().endswith("orbitals-recomp.exe"):
+                    exe_base=mb; break
+            print(f"EXE_BASE={exe_base:#x}" if exe_base else "EXE_BASE=unknown")
+            if exe_base:
+                imp=read_virtual(f,rs,exe_base+0x909E40,4)
+                print("IMPCENSUS_ON="+(hex(struct.unpack("<I",imp)[0]) if imp else "not-captured"))
+                probe_ptr_data=read_virtual(f,rs,exe_base+0x7173B8,8)
+                if probe_ptr_data:
+                    probe_ptr=struct.unpack("<Q",probe_ptr_data)[0]
+                    probe_flag=read_virtual(f,rs,probe_ptr,4) if probe_ptr else None
+                    print(f"ENTRY_PROBE_PTR={probe_ptr:#x} flag="+(hex(struct.unpack("<I",probe_flag)[0]) if probe_flag else "not-captured"))
+                else:
+                    print("ENTRY_PROBE_PTR=not-captured")
         # rt_dispatch receives the guest memcpy wrapper's context address and reads +0x108/+0x138.
         dispatch=0x70070C1DE0
         dctx=read_virtual(f,rs,dispatch,0x180)
