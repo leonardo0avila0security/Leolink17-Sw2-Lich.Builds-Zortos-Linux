@@ -65,12 +65,12 @@ jobs:
               vals=struct.unpack_from("<7I",b,i)
               out.append("MOD0 fields="+", ".join(f"{x:#x}" for x in vals))
               # Standard MOD0 dynamic pointer is field +0x18 (relative to MOD0).
-              for fieldoff in (0x18,0x1c,0x14):
+              for fieldoff in (0x1c,0x18,0x14):
                   rel=struct.unpack_from("<i",b,i+fieldoff)[0]
-                  dynva=modva+rel
+                  dynva=rel
                   dyn=readva(dynva,16)
                   if not dyn: continue
-                  out.append(f"candidate dynamic field +0x{fieldoff:X}: rel={rel:#x} va={dynva:#x}")
+                  out.append(f"candidate dynamic field +0x{fieldoff:X}: rel={rel:#x} module-relative va={dynva:#x}")
                   tags={}
                   for k in range(4096):
                       ent=readva(dynva+k*16,16)
