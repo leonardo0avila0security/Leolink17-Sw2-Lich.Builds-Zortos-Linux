@@ -160,6 +160,21 @@ jobs:
                       if tag == 0:
                           break
                       dynamic_tags[tag] = value
+          # Parse the NSO header's .dynsym/.dynstr extents and search RELA records directly.
+          sym_names = {}
+          interesting = []
+          for sym_index in range(len(dynsym)//24):
+              sym_off = sym_index*24
+              st_name, st_info, st_other, st_shndx, st_value, st_size = struct.unpack_from("<IBBHQQ", dynsym, sym_off)
+              if st_name < len(dynstr):
+                  end = dynstr.find(b"\\0", st_name)
+                  if end < 0: end = len(dynstr)
+                  name = dynstr[st_name:end].decode("utf-8", "replace")
+              else:
+                  name = ""
+              sym_names[sym_index] = name
+              if name.lower() in {"memcpy","memmove","memset","memcmp","memchr","bcopy","memcpy_s"}:
+                  interesting.append((sym_index,name,st_shndx,st_value,st_size))
           import_lines = [
               f"NSO .rodata mem=0x{ro_mem:X} size=0x{ro_size:X} compressed=0x{ro_file_size:X}",
               f"NSO .data mem=0x{data_mem:X} size=0x{data_size:X} compressed=0x{data_file_size:X}",
@@ -170,6 +185,25 @@ jobs:
           tag_names = {2:"DT_PLTRELSZ", 5:"DT_STRTAB", 6:"DT_SYMTAB", 7:"DT_RELA", 8:"DT_RELASZ", 9:"DT_RELAENT", 10:"DT_STRSZ", 11:"DT_SYMENT", 20:"DT_PLTREL", 23:"DT_JMPREL"}
           for tag, value in sorted(dynamic_tags.items()):
               import_lines.append(f"{tag_names.get(tag, hex(tag))} = 0x{value:X}")
+          import_lines.append("DYNAMIC SYMBOLS OF INTEREST")
+          for sym_index, name, shndx, value, size in interesting:
+              import_lines.append(f"  sym#{sym_index}: {name} shndx={shndx} value=0x{value:X} size=0x{size:X}")
+          for segment_name, blob in (("rodata", rodata), ("data", data)):
+              for slot in (0x900A008, 0x900A010):
+                  pattern = struct.pack("<Q", slot)
+                  pos = blob.find(pattern)
+                  found = 0
+                  while pos >= 0 and found < 20:
+                      if pos+24 <= len(blob):
+                          r_offset, r_info, r_addend = struct.unpack_from("<QQq", blob, pos)
+                          reloc_type = r_info & 0xFFFFFFFF
+                          sym_index = r_info >> 32
+                          if reloc_type == 1026 and sym_index < len(sym_names):
+                              import_lines.append(f"RELA SCAN {segment_name}+0x{pos:X}: GOT+0x{r_offset:X} -> sym#{sym_index} {sym_names.get(sym_index,'')} type={reloc_type} addend={r_addend}")
+                              found += 1
+                      pos = blob.find(pattern, pos+1)
+                  if found == 0:
+                      import_lines.append(f"RELA SCAN {segment_name}: GOT+0x{slot:X} not found as r_offset")
           jmprel = dynamic_tags.get(23)
           pltrelsz = dynamic_tags.get(2, 0)
           if jmprel is not None and pltrelsz:
