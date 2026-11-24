@@ -480,3 +480,24 @@ Commits :
 - workflow ciblé : `d26166be0337fbbe92887dd459e4707c4d3cd181`
 
 **État : analyse en cours.** Le probe doit encore produire son artefact avant de conclure sur l'objet propriétaire, l'index d'enregistrement ou la cause de la valeur `0x01490140`. Aucun correctif de taille n'est proposé à ce stade. Le patch de marshalling de source reste un correctif partiel non jouable tant que la taille n'est pas comprise.
+
+
+## Identification du propriétaire probable de la table x27
+
+Une lecture croisée du dump brut et des accès du désassemblage permet maintenant de distinguer les deux objets candidats :
+- `0x0E40012C10) (contexte `+0x98)) ne présente pas un compteur non nul à `+0x160) dans le snapshot ;
+- `0x0E40012810) (contexte `+0xA8)) contient à `+0x158) le pointeur `0x0CE01F2C00) et à `+0x160) un DWORD bas égal à `10).
+
+Cette seconde disposition correspond exactement aux accès AArch64 de la fonction :
+- `ldr x9, [x21,#0x158]` : base du tableau de records ;
+- `ldr w8, [x21,#0x160]` : limite/compte comparé à l'index `w20) ;
+- `umaddl x27,w20,#0xE8,x9` : record sélectionné au stride `0xE8).
+
+L'interprétation la plus probable est donc `x21 = 0x0E40012810), tableau de records à `0x0CE01F2C00), avec 10 entrées disponibles dans le dump. Cela corrige le probe antérieur qui avait pris `0x0E40012810) lui-même comme base du tableau : cette adresse est l'objet propriétaire contenant le pointeur de tableau, pas la base du tableau.
+
+Pour le record d'index 0, les champs `+0xD0/+0xD8) sont les prochains à vérifier. La séquence de calcul est :
+`x9 = record[+0xD0] (ou record+0x10 si nul)`,
+`x8 = x9 + sign_extend(record[+0xD8]) * 0x40`,
+puis lecture de 8 octets à `x8-8). Le champ signé `-3) observé à `0x0CE01F2C00+0xD8) devient ainsi particulièrement pertinent : s'il s'agit bien du record sélectionné, il ferait pointer la lecture vers `0x0E40012810-0xC8). Cette relation doit encore être confirmée par le probe qui lit directement cette adresse et les autres records ; elle n'est pas encore une preuve que l'entrée 0 est celle active au crash.
+
+Le nouveau script `tools/nx2/probe_orbitals_size_field.py` teste maintenant les deux candidats à partir des pointeurs effectivement capturés dans le contexte et vérifie les champs de table et le DWORD chargé, sans présumer l'index actif.
