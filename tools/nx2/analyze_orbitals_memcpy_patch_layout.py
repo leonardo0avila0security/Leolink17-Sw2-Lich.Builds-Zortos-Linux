@@ -5,6 +5,7 @@ import hashlib, struct, sys, zipfile
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
 
 TARGET_DLL_RVA = 0x1B5A937E
+PATCH_SIZE_INIT_RVA = 0x1B5A8C65
 TARGET_EXE_RVA = 0x40CE0
 EXECUTE = 0x20000000
 
@@ -105,6 +106,7 @@ def main(path):
                     print(f"EXEC_SECTION {s['name']} RVA={s['va']:#x} VSIZE={s['vsize']:#x} RAW={s['rawptr']:#x}+{s['rawsize']:#x}")
             disasm_window(data,info,rva,0x60 if label=="orbitalgame.dll" else 0x180,label+" target")
             if label=="orbitalgame.dll":
+                disasm_window(data,info,PATCH_SIZE_INIT_RVA,0x50,"fallback size-local initialization branch")
                 caves(data,info)
     print("\nRead-only inspection only; no binary was modified.")
 if __name__=="__main__":
