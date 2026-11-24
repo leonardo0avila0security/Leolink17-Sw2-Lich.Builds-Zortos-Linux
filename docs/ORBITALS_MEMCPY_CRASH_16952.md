@@ -105,3 +105,68 @@ Un workflow ciblé a été ajouté pour scanner les objets compilés et retrouve
 - analyse de l'objet `main_main_0184.o` : https://github.com/sinedgiveaways/tool/actions/runs/45464966158
 
 La prochaine étape est d'identifier le ou les objets qui définissent `f_70070c1de0` et `f_70070c1df0`, puis de lire leurs instructions et relocations autour des appels au helper host. Ce sera le point de preuve nécessaire pour déterminer si le mauvais pointeur est créé dans le wrapper, dans son appelant guest, ou plus tôt.
+
+
+## Appel guest exact du memcpy fautif — comparaison des arguments
+
+La désassemblage AArch64 de l'exécutable `exefs/main` confirme le retour de pile `0x700175A130` : il suit immédiatement le deuxième appel `BL 0x70C1DE0` à `main+0x175A12C`. Le stub guest `main+0x70C1DE0` saute par le slot GOT `0x900A008), celui du `memcpy` identifié dans le dump.
+
+Les instructions autour des deux copies sont :
+
+```asm
+main+0x175A100: mov x25, x1
+main+0x175A104: mov x19, x2
+main+0x175A108: mov x2, x27
+main+0x175A10C: bl  0x70C1DE0       ; memcpy #1
+main+0x175A110: mov x2, x19
+main+0x175A114: mov x0, x26
+main+0x175A118: mov x26, x28
+main+0x175A11C: tbz w2, #2, 0x175A130
+main+0x175A120: add x1, x25, x27
+main+0x175A124: and x2, x2, #4
+main+0x175A128: add x0, x0, x27
+main+0x175A12C: bl  0x70C1DE0       ; memcpy #2
+main+0x175A130: ldp w0, w8, [x26, #8]
+```
+
+Le dump donne `RSI+0xF0 = 0x700175A130`, donc le contexte fautif correspond au deuxième appel, pas au premier.
+
+Au deuxième appel, les arguments guest sont explicitement calculés comme :
+- destination : `x0 + x27`
+- source : `x25 + x27`
+- taille : `x2 & 4`, donc seulement `0` ou `4` octets.
+
+Mais le descripteur consommé par le helper host contient :
+- destination : `0x12E1A8000C`
+- source : `0x01460149013D0140`
+- taille : `0x05240500` (86,246,656 octets)
+
+La taille host capturée est donc incompatible avec l'argument guest du deuxième appel. Elle est en revanche compatible avec une valeur conservée de la première copie, qui utilise `x2 = x27`. Le source host est également le contenu du buffer à `0x11C51F700`, et non l'adresse du buffer elle-même. C'est un indice fort d'un argument de copie périmé/mal transmis ou d'une corruption du contexte entre l'appel guest et la lecture du descripteur. La cause exacte (mauvais marshalling, réutilisation/race du contexte, ou autre écriture concurrente) n'est pas encore prouvée.
+
+## Helper host exact et correction d'offset
+
+Le symbole hostfn `memcpy` a été localisé à `orbitals-recomp.exe+0x40CE0` (VA du dump `0x7FF6C82A0CE0`). Son prologue est :
+
+```asm
+mov rsi, rcx
+mov rdi, [rcx]       ; destination
+mov rbx, [rcx+8]     ; source
+mov r14, [rcx+0x10]  ; taille
+...
+mov rcx, rdi
+mov rdx, rbx
+mov r8,  r14
+call 0x7FF6C896C430
+```
+
+L'adresse appelée `0x7FF6C896C430` correspond à `orbitals-recomp.exe+0x70A430` (base du module `0x7FF6C8260000`). Le précédent offset `+0x70C430` indiqué plus haut était une erreur de transcription ; la cible exacte observée dans le dump est `+0x70A430`.
+
+Le helper lit les trois champs du descripteur tels quels. Il ne transforme pas la source en contenu et ne remplace pas la taille. Les mauvais arguments sont donc déjà présents dans le descripteur au moment où le helper démarre.
+
+## Conclusion mise à jour
+
+La preuve la plus forte à ce stade n'est pas une faute de l'implémentation de `memcpy` elle-même : c'est le désaccord entre le deuxième appel guest (`source=x25+x27`, `size=x2&4`) et le descripteur reçu par le helper (`source=0x01460149013D0140`, `size=0x05240500`). Le diagnostic se concentre maintenant sur la construction et la durée de vie du contexte d'appel de `f_7001759b20`, en particulier sur le passage du premier `memcpy` au deuxième et sur une éventuelle réutilisation concurrente du même contexte.
+
+Artefacts :
+- scan des définitions des wrappers `f_70070c1de0` / `f_70070c1df0` dans les 832 objets compilés : https://github.com/sinedgiveaways/tool/actions/runs/45465324639
+- désassemblage AArch64 du callsite exact et des stubs PLT : https://github.com/sinedgiveaways/tool/actions/runs/45465692468
