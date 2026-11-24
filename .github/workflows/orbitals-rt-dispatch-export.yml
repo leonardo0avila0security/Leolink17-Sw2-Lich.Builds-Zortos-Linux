@@ -87,5 +87,7 @@ jobs:
             hostfn_tracked_wrapper.txt
             trace_context_helper.txt
             trace_logger.txt
+            fnprof-hit-disassembly.txt
+            fnprof_hit_body.txt
           if-no-files-found: error
           retention-days: 14
