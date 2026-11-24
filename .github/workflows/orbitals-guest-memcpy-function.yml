@@ -1,0 +1,39 @@
+name: orbitals-guest-memcpy-function
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-guest-memcpy-function.yml"
+      - "tools/nx2/recomp/disasm_fn.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disassemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download matching exefs
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output exefs.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/exefs.zip"
+          mkdir exefs
+          unzip -q exefs.zip -d exefs
+      - name: Disassemble full guest function
+        run: |
+          python -m pip install --disable-pip-version-check capstone
+          python tools/nx2/recomp/disasm_fn.py exefs main+0x1759b20 --count 500 --out guest-memcpy-function.txt
+          grep -n -E '1759e|1759f|175a0|175a1' guest-memcpy-function.txt | head -250
+      - name: Upload guest function disassembly
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-guest-memcpy-function
+          path: guest-memcpy-function.txt
+          if-no-files-found: error
+          retention-days: 14
