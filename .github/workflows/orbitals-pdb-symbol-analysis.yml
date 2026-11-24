@@ -80,7 +80,9 @@ jobs:
           llvm-pdbutil dump --symbols --modi=667 orbitalgame.dll.pdb > pdb-mod667-symbols.txt
           llvm-objdump -t main_main_0184.o > object-symbols.txt
           llvm-objdump -d --no-show-raw-insn main_main_0184.o > object-disassembly.txt
+          llvm-objdump -dr --no-show-raw-insn main_main_0184.o > object-relocations.txt
           grep -n -A100 -B5 "f_7001759b20" object-disassembly.txt > object-target-function.txt || true
+          grep -n -B20 -A20 "198aa" object-relocations.txt > object-relocation-callsite.txt || true
           python - <<'PY'
           import re, struct
           from pathlib import Path
@@ -125,6 +127,81 @@ jobs:
           if offset < 0 or offset+function_size > len(text):
               raise SystemExit(f"Function range outside .text: off={offset:#x} size={function_size:#x} text={len(text):#x}")
 
+          # Decompress .rodata/.data and resolve the import slots used by the two guest stubs.
+          ro_off, ro_mem, ro_size = struct.unpack_from("<III", nso, 0x20)
+          data_off, data_mem, data_size = struct.unpack_from("<III", nso, 0x30)
+          ro_file_size = struct.unpack_from("<I", nso, 0x64)[0]
+          data_file_size = struct.unpack_from("<I", nso, 0x68)[0]
+          ro_packed = nso[ro_off:ro_off+ro_file_size]
+          data_packed = nso[data_off:data_off+data_file_size]
+          rodata = lz4.block.decompress(ro_packed, uncompressed_size=ro_size) if flags & 2 else ro_packed
+          data = lz4.block.decompress(data_packed, uncompressed_size=data_size) if flags & 4 else data_packed
+          def read_va(va, size):
+              for base, blob in ((text_mem, text), (ro_mem, rodata), (data_mem, data)):
+                  if base <= va and va+size <= base+len(blob):
+                      return blob[va-base:va-base+size]
+              return None
+          dynstr_off, dynstr_size = struct.unpack_from("<II", nso, 0x90)
+          dynsym_off, dynsym_size = struct.unpack_from("<II", nso, 0x98)
+          dynstr = rodata[dynstr_off:dynstr_off+dynstr_size]
+          dynsym = rodata[dynsym_off:dynsym_off+dynsym_size]
+          mod0_off = struct.unpack_from("<I", text, 4)[0]
+          if text[mod0_off:mod0_off+4] != b"MOD0":
+              mod0_off = text.find(b"MOD0")
+          dynamic_va = None
+          dynamic_tags = {}
+          if mod0_off >= 0 and text[mod0_off:mod0_off+4] == b"MOD0":
+              dynamic_rel = struct.unpack_from("<i", text, mod0_off+4)[0]
+              dynamic_va = mod0_off + dynamic_rel
+              dyn_blob = read_va(dynamic_va, 0x1000)
+              if dyn_blob:
+                  for p in range(0, len(dyn_blob)-15, 16):
+                      tag, value = struct.unpack_from("<qQ", dyn_blob, p)
+                      if tag == 0:
+                          break
+                      dynamic_tags[tag] = value
+          import_lines = [
+              f"NSO .rodata mem=0x{ro_mem:X} size=0x{ro_size:X} compressed=0x{ro_file_size:X}",
+              f"NSO .data mem=0x{data_mem:X} size=0x{data_size:X} compressed=0x{data_file_size:X}",
+              f"dynstr header offset=0x{dynstr_off:X} size=0x{dynstr_size:X}",
+              f"dynsym header offset=0x{dynsym_off:X} size=0x{dynsym_size:X}",
+              f"MOD0 offset={mod0_off:#x} dynamic VA={dynamic_va!r}",
+          ]
+          tag_names = {2:"DT_PLTRELSZ", 5:"DT_STRTAB", 6:"DT_SYMTAB", 7:"DT_RELA", 8:"DT_RELASZ", 9:"DT_RELAENT", 10:"DT_STRSZ", 11:"DT_SYMENT", 20:"DT_PLTREL", 23:"DT_JMPREL"}
+          for tag, value in sorted(dynamic_tags.items()):
+              import_lines.append(f"{tag_names.get(tag, hex(tag))} = 0x{value:X}")
+          jmprel = dynamic_tags.get(23)
+          pltrelsz = dynamic_tags.get(2, 0)
+          if jmprel is not None and pltrelsz:
+              rela_blob = read_va(jmprel, pltrelsz)
+              if rela_blob:
+                  import_lines.append("IMPORT RELOCATIONS IN GOT RANGE 0x900A000..0x900A100")
+                  for p in range(0, len(rela_blob)-23, 24):
+                      r_offset, r_info, r_addend = struct.unpack_from("<QQq", rela_blob, p)
+                      if 0x900A000 <= r_offset < 0x900A100:
+                          sym_index = r_info >> 32
+                          sym_off = sym_index * 24
+                          name = "<symbol-index-out-of-range>"
+                          if sym_off+24 <= len(dynsym):
+                              st_name = struct.unpack_from("<I", dynsym, sym_off)[0]
+                              if st_name < len(dynstr):
+                                  end = dynstr.find(b"\\0", st_name)
+                                  if end < 0: end = len(dynstr)
+                                  name = dynstr[st_name:end].decode("utf-8", "replace")
+                          import_lines.append(f"  GOT+0x{r_offset:X}: sym#{sym_index} {name} reloc_type={r_info & 0xFFFFFFFF} addend={r_addend}")
+              else:
+                  import_lines.append("DT_JMPREL address not readable from NSO segments")
+          else:
+              import_lines.append("DT_JMPREL / DT_PLTRELSZ not found; GOT slot names unresolved")
+          for stub in (0x70070C1DE0, 0x70070C1DF0):
+              off = stub-0x7000000000-text_mem
+              if 0 <= off < len(text):
+                  code = text[off:min(len(text), off+0x30)]
+                  import_lines.append(f"\\nGUEST STUB 0x{stub:X}")
+                  for ins in md.disasm(code, stub):
+                      import_lines.append(f"0x{ins.address:016X}: {ins.mnemonic:8} {ins.op_str}")
+          Path("guest-import-resolution.txt").write_text("\\n".join(import_lines)+"\\n", encoding="utf-8")
+
           md = Cs(CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN)
           md.detail = True
           out = [
@@ -164,7 +241,10 @@ jobs:
             pdb-mod667-symbols.txt
             object-symbols.txt
             object-target-function.txt
+            object-relocations.txt
+            object-relocation-callsite.txt
             guest-function-7001759b20.asm
+            guest-import-resolution.txt
             target-function-analysis.txt
           if-no-files-found: error
           retention-days: 14
