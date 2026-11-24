@@ -49,7 +49,7 @@ def main(path):
         table=0x0E40012810
         print(f"\\n[TABLE] base={table:#x} stride=0xE8; probing each entry separately")
         matches=[]
-        for idx in range(256):
+        for idx in range(4096):
             rec_addr=table+idx*0xE8
             rec=readv(f,ranges,rec_addr,0xE0)
             if rec is None:
@@ -65,8 +65,8 @@ def main(path):
             val=q(loaded,0) if loaded else None
             if ptr or raw or val is not None:
                 print(f"idx={idx:3d} x27={rec_addr:#x} +D0={ptr:#x} +D8raw={raw:#018x} s32={count} base={base:#x} x8-8={load_addr:#x} d0={('unmapped' if val is None else hex(val))}")
-            if val is not None and (val&0xffffffff)==0x01490140:
-                matches.append((idx,rec_addr,ptr,raw,base,x8,load_addr,val))
+            if (val is not None and (val&0xffffffff)==0x01490140) or (raw&0xffffffff)==0x01490140 or ptr==0x11C51F8A8:
+                matches.append((idx,rec_addr,ptr,raw,base,x8,load_addr,0 if val is None else val))
         print(f"\\nMATCHES_LOW32_01490140={len(matches)}")
         for x in matches: print("MATCH "+ " ".join(hex(v) if isinstance(v,int) else str(v) for v in x))
         for label,addr,n in (("source_stack_object",0x11C51F8A8,0x200),("string_object",0x11C51F6F0,0x100),("x21_preceding",x21-0x200,0x420)):
