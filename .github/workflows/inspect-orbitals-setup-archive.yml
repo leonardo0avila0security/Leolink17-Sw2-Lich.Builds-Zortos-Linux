@@ -1,20 +1,36 @@
-name: inspect-orbitals-setup-archive
+name: inspect-orbitals-setup-archives
 on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/inspect-orbitals-setup-archive.yml"
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   inspect:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Download setup archive
-        run: curl -fL --retry 3 -o setup.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup.zip"
-      - name: List archive structure
+      - name: Download setup and setup-work archives
+        run: |
+          curl --fail --location --retry 3 --output setup.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup.zip"
+          curl --fail --location --retry 3 --output setup-work.zip "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/setup-work.zip"
+      - name: Inventory actual preparation entrypoints
         run: |
           python - <<'PY'
           import zipfile
-          with zipfile.ZipFile("setup.zip") as z:
-              for n in z.namelist()[:500]:
-                  i=z.getinfo(n)
-                  print(f"{i.file_size:12} {n}")
+          for archive in ("setup.zip","setup-work.zip"):
+              print("\\n===== "+archive+" =====")
+              with zipfile.ZipFile(archive) as z:
+                  names=z.namelist()
+                  for n in names:
+                      low=n.lower()
+                      base=n.rsplit("/",1)[-1].lower()
+                      if (base in ("setup.py","prepare.py","setup.bat","setup.cmd","setup.exe","prepare.bat","prepare.cmd","pyproject.toml","readme.md")
+                          or "setup-state" in low or "nup" in base or "prepare" in low and (base.endswith(".py") or base.endswith(".bat") or base.endswith(".cmd"))):
+                          info=z.getinfo(n)
+                          print(f"{info.file_size:10} {n}")
+                  print("TOTAL_FILES",len(names))
           PY
