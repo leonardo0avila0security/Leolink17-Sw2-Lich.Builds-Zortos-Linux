@@ -97,6 +97,22 @@ def main(path):
                 if blob and needle in blob: shared.append(t)
         print("THREAD_STACKS_REFERENCING_RSI="+",".join(hex(x) for x in shared))
         print(f"THREAD_STACK_REFERENCE_COUNT={len(shared)}")
+        # Search all captured memory for references to the host descriptor and its tracker.
+        tracker=q(0x138)
+        needles=(("descriptor",rsi),("tracker",tracker),("guest_object",q(0x48)))
+        with mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as mm:
+            for label,value in needles:
+                needle=struct.pack("<Q",value)
+                hits=[]
+                for va,length,filepos in rs:
+                    pos=mm.find(needle,filepos,filepos+length)
+                    while pos>=0:
+                        hits.append(va+(pos-filepos))
+                        if len(hits)>=100: break
+                        pos=mm.find(needle,pos+1,filepos+length)
+                    if len(hits)>=100: break
+                print(f"MEMORY_REFS_{label.upper()}_COUNT={len(hits)}")
+                print(f"MEMORY_REFS_{label.upper()}="+",".join(hex(x) for x in hits[:40]))
         # Resolve profiling flags used by fnprof_hit in this exact dump.
         if 4 in ss:
             mr,ms=ss[4]
@@ -113,6 +129,13 @@ def main(path):
             if exe_base:
                 imp=read_virtual(f,rs,exe_base+0x909E40,4)
                 print("IMPCENSUS_ON="+(hex(struct.unpack("<I",imp)[0]) if imp else "not-captured"))
+                track_ref=read_virtual(f,rs,exe_base+0x719A20,8)
+                if track_ref:
+                    track_ptr=struct.unpack("<Q",track_ref)[0]
+                    track_flag=read_virtual(f,rs,track_ptr,4) if track_ptr else None
+                    print(f"KERN_HOST_TRACK_PTR={track_ptr:#x} flag="+(hex(struct.unpack("<I",track_flag)[0]) if track_flag else "not-captured"))
+                else:
+                    print("KERN_HOST_TRACK_PTR=not-captured")
                 probe_ptr_data=read_virtual(f,rs,exe_base+0x7173B8,8)
                 if probe_ptr_data:
                     probe_ptr=struct.unpack("<Q",probe_ptr_data)[0]
