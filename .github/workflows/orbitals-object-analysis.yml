@@ -45,17 +45,20 @@ jobs:
             print(name, len(data), "->",p)
           PY
           file object-input/* | tee object-file-types.txt
-      - name: Inspect object symbols and disassembly
+      - name: Inspect object symbols, relocations and disassembly
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y llvm
-          llvm-readobj --file-headers --sections --symbols object-input/main_main_0184.o > object-readobj.txt
+          llvm-readobj --file-headers --sections --symbols --relocations object-input/main_main_0184.o > object-readobj.txt
           llvm-nm --print-size --size-sort --demangle object-input/main_main_0184.o > object-symbols.txt || true
           llvm-objdump -d --demangle --no-show-raw-insn object-input/main_main_0184.o > object-disassembly.txt
+          llvm-objdump -r --demangle object-input/main_main_0184.o > object-relocations.txt
+          llvm-objdump -d --demangle --no-show-raw-insn --disassemble-symbols=f_7001759b20 object-input/main_main_0184.o > f_7001759b20-disassembly.txt
+          llvm-objdump -d --demangle --no-show-raw-insn --disassemble-symbols=f_70017508e0 object-input/main_main_0184.o > f_70017508e0-disassembly.txt
           grep -ni -C 4 -E '7001759b20|70017508e0|1759b20|17508e0|f_700' object-symbols.txt > crash-symbol-hits.txt || true
-          grep -ni -C 12 -E '7001759b20|70017508e0|1759b20|17508e0|f_700' object-disassembly.txt > crash-disassembly-hits.txt || true
+          grep -ni -C 8 -E 'f_7001759b20|f_70017508e0' object-relocations.txt > crash-relocation-hits.txt || true
           {
             echo "OBJECT TYPE"
             cat object-file-types.txt
@@ -66,27 +69,39 @@ jobs:
             echo "CRASH SYMBOL HITS"
             cat crash-symbol-hits.txt
             echo
-            echo "CRASH DISASSEMBLY HITS"
-            cat crash-disassembly-hits.txt
+            echo "CRASH RELOCATION HITS"
+            cat crash-relocation-hits.txt
+            echo
+            echo "SYMBOL-SPECIFIC DISASSEMBLY"
+            cat f_7001759b20-disassembly.txt
+            cat f_70017508e0-disassembly.txt
             echo
             echo "SYMBOL COUNT"
             wc -l object-symbols.txt
             echo "DISASSEMBLY LINES"
             wc -l object-disassembly.txt
+            echo "RELOCATION LINES"
+            wc -l object-relocations.txt
           } > object-analysis-summary.txt
           cat object-analysis-summary.txt
-      - name: Upload object analysis only
+      - name: Upload exact object and focused analysis
         uses: actions/upload-artifact@v7
         with:
           name: orbitals-main-0184-object-analysis
           path: |
+            object-input/main_main_0184.o
+            object-input/main_main_0184.key
+            object-input/link.rsp
             object-analysis-summary.txt
             object-file-types.txt
             archive-targets.txt
             object-readobj.txt
             object-symbols.txt
             object-disassembly.txt
+            object-relocations.txt
             crash-symbol-hits.txt
-            crash-disassembly-hits.txt
+            crash-relocation-hits.txt
+            f_7001759b20-disassembly.txt
+            f_70017508e0-disassembly.txt
           if-no-files-found: error
           retention-days: 14
