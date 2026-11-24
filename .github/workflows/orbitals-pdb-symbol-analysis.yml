@@ -38,15 +38,19 @@ jobs:
           set -euo pipefail
           command -v llvm-pdbutil
           llvm-pdbutil dump --summary orbitalgame.dll.pdb > pdb-summary.txt
-          llvm-pdbutil dump --publics --load-address=0x7FFA44970000 orbitalgame.dll.pdb > pdb-publics.txt
-          llvm-pdbutil dump --globals --load-address=0x7FFA44970000 orbitalgame.dll.pdb > pdb-globals.txt
+          llvm-pdbutil dump --publics orbitalgame.dll.pdb > pdb-publics.txt
+          llvm-pdbutil dump --globals orbitalgame.dll.pdb > pdb-globals.txt
           llvm-pdbutil dump --modules --files orbitalgame.dll.pdb > pdb-modules.txt
+          llvm-pdbutil dump --section-headers --section-map --section-contribs orbitalgame.dll.pdb > pdb-section-layout.txt
           {
             echo "=== PDB SUMMARY ==="
             cat pdb-summary.txt
             echo
-            echo "=== TARGET ADDRESS SEARCH: DLL RVA 0x1B5A9300 / 0x1C11DF00 ==="
-            grep -iE "1B5A[0-9A-F]{4}|1C11D[0-9A-F]{3}" pdb-publics.txt pdb-globals.txt || true
+            echo "=== PUBLIC / GLOBAL SYMBOLS AROUND TARGET OFFSETS ==="
+            grep -iE "1B5A[0-9A-F]{4}|1C11D[0-9A-F]{3}|f_7001759b20|1b5a9300|1c11df00" pdb-publics.txt pdb-globals.txt || true
+            echo
+            echo "=== SECTION CONTRIBUTIONS ==="
+            cat pdb-section-layout.txt
             echo
             echo "=== RELEVANT MODULES / COMPILANDS ==="
             grep -iE "main_main|main\.cpp|orbitalgame|recomp" pdb-modules.txt | head -300 || true
@@ -63,6 +67,7 @@ jobs:
             pdb-publics.txt
             pdb-globals.txt
             pdb-modules.txt
+            pdb-section-layout.txt
             pdb-target-analysis.txt
           if-no-files-found: error
           retention-days: 14
