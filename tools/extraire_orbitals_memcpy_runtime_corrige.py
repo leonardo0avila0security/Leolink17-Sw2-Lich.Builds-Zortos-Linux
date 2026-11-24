@@ -319,7 +319,10 @@ def main():
                         files["dispatch_slow_resolved_target_addr.txt"] = f"0x{entry_target:016X}\n".encode("ascii")
                         report.append("resolved hostfn dispatch target: 0x600 octets captured")
                         # The dispatcher target is the hostfn entry; capture its memcpy slot and call wrappers.
-                        slot_table_va = exe_base + 0x1A736B0
+                        slot_table_va = exe_base + 0x1AAA500
+                        nslots_data = read_virtual(f, ranges, exe_base + 0x1AAA4F4, 4)
+                        if nslots_data:
+                            report.append(f"hostfn nslots = {struct.unpack('<I', nslots_data)[0]}")
                         memcpy_slot_va = slot_table_va + 0x2CD*0x40
                         slot_data = read_virtual(f, ranges, memcpy_slot_va, 0x40)
                         if slot_data:
@@ -334,8 +337,8 @@ def main():
                                 if fn_code:
                                     add_file(files, "hostfn_memcpy_slot_function.bin", fn_code)
                                     files["hostfn_memcpy_slot_function_addr.txt"] = f"0x{slot_fn:016X}\n".encode("ascii")
-                        for helper_name, helper_rva in (("hostfn_nonblocking_call_wrapper", 0x37C20), ("hostfn_blocking_call_wrapper", 0x37C70)):
-                            helper_code = read_virtual(f, ranges, exe_base + helper_rva, 0x180)
+                        for helper_name, helper_rva in (("hostfn_call_wrappers_context", 0x37C00),):
+                            helper_code = read_virtual(f, ranges, exe_base + helper_rva, 0x300)
                             if helper_code:
                                 add_file(files, helper_name + ".bin", helper_code)
                                 files[helper_name + "_addr.txt"] = f"0x{exe_base+helper_rva:016X}\n".encode("ascii")
