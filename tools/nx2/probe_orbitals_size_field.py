@@ -78,6 +78,22 @@ def main(path):
      found+=1
      print("  *** MATCHES observed size dword / candidate string-buffer address ***")
    print(f"matching_candidates={found}")
+# Reconstruct the signed comparison that gates the x8 load.
+x29=u64(ctx,0xE8)
+x29m8=rv(f,rs,x29-8,8) if x29>=8 else None
+array_ptr=u64(x29m8) if x29m8 else 0
+loop_index=u64(ctx,0xC0)
+index_addr=array_ptr+loop_index*8
+index_data=rv(f,rs,index_addr,4) if array_ptr else None
+w9=struct.unpack("<i",index_data)[0] if index_data else None
+w8_data=rv(f,rs,source_base+0xD8,4)
+w8=s32(u32(w8_data)) if w8_data else None
+flag60=u64(ctx,0x60)&1
+print("\\n[BRANCH COMPARISON]")
+print(f"x29={x29:#x} [x29-8]={array_ptr:#x} loop_index={loop_index:#x} index_addr={index_addr:#x} w9={w9}")
+print(f"x27_candidate={source_base:#x} w8_at_x27_plus_D8={w8} context_flag60_bit0={flag60}")
+print(f"would_take_signed_lt_and_flag={(w9 is not None and w8 is not None and w9<w8 and flag60==1)}")
+
   # Stack evidence: preserve key locals and nearby values around metadata pointer.
   sp=u64(ctx,0x100)-0x120
   print("\n[guest stack locals]")
