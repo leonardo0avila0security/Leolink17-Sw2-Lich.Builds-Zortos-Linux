@@ -97,6 +97,20 @@ def main(path):
                 if blob and needle in blob: shared.append(t)
         print("THREAD_STACKS_REFERENCING_RSI="+",".join(hex(x) for x in shared))
         print(f"THREAD_STACK_REFERENCE_COUNT={len(shared)}")
+        # rt_dispatch receives the guest memcpy wrapper's context address and reads +0x108/+0x138.
+        dispatch=0x70070C1DE0
+        dctx=read_virtual(f,rs,dispatch,0x180)
+        print(f"DISPATCH_CONTEXT={dispatch:#x} captured={dctx is not None}")
+        if dctx is not None:
+            for off in (0,8,0x10,0xF0,0x108,0x138):
+                value=struct.unpack_from("<Q",dctx,off)[0]
+                print(f"DISPATCH+{off:03X}={value:#018x}")
+            ptr=struct.unpack_from("<Q",dctx,0x138)[0]
+            if 0x100000000<=ptr<0x800000000000:
+                pctx=read_virtual(f,rs,ptr,0x100)
+                print(f"DISPATCH_PLUS_138_TARGET={ptr:#x} captured={pctx is not None}")
+                if pctx is not None:
+                    print("DISPATCH_PLUS_138_TARGET_HEX="+pctx.hex())
 
 if __name__=="__main__":
     if len(sys.argv)!=2: raise SystemExit("usage: probe_orbitals_memcpy_context.py dump.dmp")
