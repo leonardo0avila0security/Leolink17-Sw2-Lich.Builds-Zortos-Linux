@@ -1,0 +1,44 @@
+name: Extract Orbitals caller window
+on:
+  push:
+    branches:
+      - analysis/extract-orbitals-caller-1b5a8ff0
+    paths:
+      - .github/workflows/extract-orbitals-caller.yml
+      - tools/extract_orbitals_caller.py
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: analysis/extract-orbitals-caller-1b5a8ff0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download published crash dump
+        run: |
+          curl --fail --location --retry 3 \
+            'https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.exe.16952.dmp.zip' \
+            --output crash-dump.zip
+          unzip -l crash-dump.zip
+          mkdir dump
+          unzip -q crash-dump.zip -d dump
+          find dump -type f -maxdepth 3 -printf '%p %s bytes\n'
+      - name: Extract and disassemble caller window
+        run: |
+          python -m pip install --disable-pip-version-check capstone
+          DMP="$(find dump -type f -name '*.dmp' -print -quit)"
+          test -n "$DMP"
+          python tools/extract_orbitals_caller.py "$DMP"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbitals-caller-1B5A8FF0
+          path: caller_1B5A8FF0/
+          if-no-files-found: error
+          retention-days: 14
