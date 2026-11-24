@@ -58,6 +58,9 @@ jobs:
                   out.append(f"BAD ZIP: {e}")
           Path("asset-inventory.txt").write_text("\n".join(out)+"\n", encoding="utf-8")
           print("\n".join(out))
+          marker = "[MEMOIRE AUTOUR DU MEMCPY FAUTIF]"
+          pos = report.find(marker)
+          open("fault-memory-analysis.txt", "w", encoding="utf-8").write(report[pos:] if pos >= 0 else "Memory section not present in runtime report\\n")
           PY
           cd matching-symbols
           find . -type f -printf '%p %s bytes\n' | sort > ../extracted-symbol-files.txt
@@ -404,9 +407,14 @@ jobs:
               raise SystemExit("Module base missing from extraction report")
           bases = {"dll": int(dll_match.group(1), 16), "exe": int(exe_match.group(1), 16)}
           windows = [
+              ("caller_main_1B5A8F00.bin", "dll", 0x1B5A8F00),
               ("caller_main_1B5A9300.bin", "dll", 0x1B5A9300),
               ("wrapper_1C11DEE0.bin", "dll", 0x1C11DEE0),
               ("wrapper_internal_1C11DF00.bin", "dll", 0x1C11DF00),
+              ("runtime_resolver_1C7ED0C0.bin", "dll", 0x1C7ED0C0),
+              ("runtime_call_dispatch_1C7ED0E0.bin", "dll", 0x1C7ED0E0),
+              ("dll_memcpy_1C7C6F90.bin", "dll", 0x1C7C6F90),
+              ("dll_memmove_1C7C6CD0.bin", "dll", 0x1C7C6CD0),
               ("exe_copy_helper_40C000.bin", "exe", 0x40C00),
               ("exe_memcpy_thunk_70C400.bin", "exe", 0x70C400),
               ("exe_pre_copy_helper_29FCB0.bin", "exe", 0x29FCB0),
@@ -436,6 +444,7 @@ jobs:
             report.txt
             orbitals_memcpy_runtime_corrige.zip
             runtime-disassembly.txt
+            fault-memory-analysis.txt
             build-assets/asset-inventory.txt
             build-assets/extracted-symbol-files.txt
             build-assets/matching-symbols.zip
