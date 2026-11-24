@@ -37,14 +37,12 @@ jobs:
           pdb = next((n for n in names if n.lower().endswith("orbitals-recomp.exe.pdb")), None)
           if exe:
               open("orbitals-recomp.exe", "wb").write(z.read(exe))
-              print("Extracted", exe)
           if pdb:
               open("orbitals-recomp.exe.pdb", "wb").write(z.read(pdb))
-              print("Extracted", pdb)
           PY
           ls -lh orbitalgame.dll.pdb orbitals-recomp.exe* 2>/dev/null || true
-          unzip -Z1 setup-work.zip | grep -Ei '(hostfn|dispatch|nvn_api_core|cpu)' > setup-work-relevant-files.txt || true
-          cat setup-work-relevant-files.txt | head -300
+          unzip -Z1 orbitals-recomp.zip > orbitals-recomp-zip-list.txt
+          grep -Ei '(^|/)(orbitals-recomp\.exe|.*\.pdb)$' orbitals-recomp-zip-list.txt > orbitals-recomp-zip-relevant.txt || true
 
       - name: Download original ExeFS and matching generated object
         shell: bash
@@ -69,14 +67,13 @@ jobs:
           print("Relevant setup-work entries:")
           print("\\n".join(hits[:500]))
           for n in names:
-              low=n.lower()
+              low = n.lower()
               if low.endswith(".pdb") and ("orbitals-recomp" in low or "recomp.exe" in low):
-                  out="setup-work-"+n.rsplit("/",1)[-1]
+                  out = "setup-work-" + n.rsplit("/",1)[-1]
                   open(out,"wb").write(z.read(n))
-                  print("Extracted",n,"->",out)
+                  print("Extracted", n, "->", out)
           PY
-          unzip -Z1 orbitals-recomp.zip > orbitals-recomp-zip-list.txt
-          grep -Ei '(^|/)(orbitals-recomp\.exe|.*\.pdb)
+
       - name: Install LLVM PDB reader
         run: |
           sudo apt-get update
@@ -599,6 +596,9 @@ jobs:
             exe-pdb-globals.txt
             exe-pdb-target-analysis.txt
             setup-work-relevant-files.txt
+            setup-work-zip-list.txt
+            orbitals-recomp-zip-list.txt
+            orbitals-recomp-zip-relevant.txt
             object-symbols.txt
             object-target-function.txt
             object-relocations.txt
