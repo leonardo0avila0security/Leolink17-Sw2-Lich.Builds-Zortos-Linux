@@ -324,7 +324,7 @@ def main():
                     for off in range(0, len(desc)-7, 8):
                         val = struct.unpack_from("<Q", desc, off)[0]
                         rows.append(f"+0x{off:03X} = 0x{val:016X}")
-                    files["exception_rsi_descriptor_qwords.txt"] = ("\\n".join(rows)+"\\n").encode("utf-8")
+                    files["exception_rsi_descriptor_qwords.txt"] = ("\n".join(rows)+"\n").encode("utf-8")
                     report.append("Bloc RSI : 0x400 octets capturés.")
                 else:
                     report.append("Bloc RSI : non capturé.")
