@@ -84,6 +84,32 @@ def main(path):
         print(f"x29={x29:#x} [x29-8]={array_ptr:#x} loop_index={loop_index:#x} index_addr={index_addr:#x} w9={w9}")
         print(f"x27={x27:#x} w8_at_x27_plus_D8={w8} context+0x60.bit0={flag60}")
         print(f"signed_w9_lt_w8={(w9 is not None and w8 is not None and w9<w8)} combined_with_flag={(w9 is not None and w8 is not None and w9<w8 and flag60==1)}")
+        # Inspect the guest source object passed in x1 and the destination neighborhood.
+        src=u64(ctx,0xD0); dst=u64(ctx,0x00)
+        print("\\n[SOURCE OBJECT / POSSIBLE ARRAY HEADER]")
+        print(f"x1={src:#x} destination_x0={dst:#x}")
+        src_obj=rv(f,rs,src,0x100)
+        data_ptr=0
+        if src_obj:
+            for off in range(0,0x60,8):
+                val=u64(src_obj,off)
+                print(f"x1+{off:#03x}={val:#018x}")
+                if off==0: data_ptr=val
+            if len(src_obj)>=16:
+                packed=u64(src_obj,8)
+                print(f"packed_len_capacity={packed:#x} low32_len={packed&0xffffffff} high32_capacity={packed>>32}")
+        else:
+            print("source object bytes not captured")
+        if data_ptr:
+            data=rv(f,rs,data_ptr,0x100)
+            print(f"source_data_pointer={data_ptr:#x} captured={data is not None}")
+            if data:
+                print(f"source_data_first_0x80={data[:0x80].hex()}")
+        dest_near=rv(f,rs,dst-0x40,0x100) if dst>=0x40 else None
+        print(f"destination_neighborhood={dst-0x40:#x} captured={dest_near is not None}")
+        if dest_near:
+            for off in range(0,0x80,8):
+                print(f"dst_near+{off:#03x}={u64(dest_near,off):#018x}")
         sp=u64(ctx,0x100)-0x120
         print("\n[guest stack locals]")
         for off in (0x20,0x38,0x80,0x88,0x90,0x98,0xA0,0xA8,0xB0,0xB8,0xC0,0xC8,0xD0):
