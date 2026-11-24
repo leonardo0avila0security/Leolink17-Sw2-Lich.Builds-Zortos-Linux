@@ -561,3 +561,55 @@ Commit du script : f071ab5200b5d55d93fb306d1b87bf35d427d00c
 Commit du workflow : 4f55d32fcf54aafff57b2d2fb55159da01d0ba74
 
 **État :** probe ajouté sur analysis/recomp-build; son artefact doit être consulté avant de choisir un patch. Aucun patch de la taille n'est appliqué. Le défaut de marshalling source du chemin fallback reste distinct et confirmé, mais ne doit pas être confondu avec la provenance du DWORD de taille.
+
+
+
+## Cause guest du size : branche d'écriture rendue impossible par le flag (probe corrigé)
+
+Le probe `orbitals-memcpy-branch-exact` a été corrigé pour lire les registres vivants depuis le contexte hostfn, et non les sauvegardes de registres du caller. Il confirme les valeurs suivantes dans le dump 16952 :
+
+- `x21 = 0x0E40012810`
+- `x27 = 0x0CE01F2C00`
+- `x29 = 0x11C51F740`
+- `x24 = 0x78` (itération courante 120)
+- `x23 = 0x128F170000`
+- paire de boucle à `x23 + x24*8 = 0x128F1703C0`, DWORD `w20 = 0`
+- base du tableau `[x21+0x158] = 0x0CE01F2C00`, limite 10 ; le record sélectionné est bien le record 0 (`x27 == table_base + 0*0xE8`)
+- `[x27+0xD8] = -3`
+- `[x29-8] = 0x128F170008`, et `w9 = [0x128F1703C8] = -1159757815`
+- comparaison signée `w9 < w8` : vraie
+- flag conservé sur la pile `[sp+0x4C] = 0x70`, donc bit 0 = 0
+- local consommé plus tard `[sp+0x88] = 0x01490140`
+
+Le flot AArch64 est décisif :
+
+```asm
+cmp  w9, w8
+cset w9, lt
+and  w9, w12, w9
+tbz  w9, #0, 0x1759ef8
+...
+0x1759ef8: b.le 0x1759da0
+...
+0x1759f4c: ldrsw x25, [sp, #0x88]
+0x1759f7c: lsl x2, x25, #2
+```
+
+Le chemin qui écrit le DWORD dans `[sp+0x88]` commence après le `tbz` et contient `ldur d0,[x8,#-8]` puis `str d0,[sp,#0x88]`. Or `w12` est restauré à chaque itération depuis `[sp+0x4C]`; son bit 0 vaut zéro dans ce dump. Donc `w12 & (w9 < w8)` a nécessairement le bit 0 à zéro : le `tbz` saute le bloc qui écrit le local. La comparaison est vraie, mais elle est neutralisée par le flag.
+
+Le local `[sp+0x88]` atteint ensuite `ldrsw` sans que le bloc conditionnel l'ait initialisé. La valeur résiduelle `0x01490140` est multipliée par quatre et devient exactement `0x05240500` (86 246 656 octets). Ce n'est donc pas une longueur guest raisonnable issue du buffer source : c'est une valeur de pile non initialisée consommée comme longueur.
+
+Cette conclusion corrige l'hypothèse antérieure du rapport qui attribuait directement `0x01490140` à la donnée chargée depuis le record courant. Dans l'itération capturée (record 0, itération 120), le bloc de chargement/stockage est sauté ; le qword à l'adresse théorique `0x0CE01F2B48` dans le snapshot est postérieur aux écritures ultérieures et n'est pas la provenance démontrée du DWORD local.
+
+Probe corrigé :
+- commit : `c7fcd48de79be86899272ef32e223c70e33f87a`
+- run : https://github.com/sinedgiveaways/tool/actions/runs/45495545903
+- artefact : https://github.com/sinedgiveaways/tool/actions/runs/45495545903/artifacts/14968113355
+
+## Correctif à appliquer — initialisation du local, puis marshalling source
+
+Le correctif minimal à valider est maintenant clair sur le plan sémantique : initialiser le local guest correspondant à `[sp+0x88]` à zéro avant la boucle/avant tout chemin conditionnel, ou garantir que le chemin qui saute son affectation ne peut pas atteindre le `ldrsw` consommateur. La valeur par défaut zéro est la seule valeur neutre sûre en l'absence d'une entrée ayant écrit une longueur. Ne pas plafonner la taille à une constante arbitraire.
+
+Le correctif distinct du marshalling doit également écrire le vrai pointeur guest `x1 = 0x11C51F8A8` dans `[context+8]` sur le chemin fallback. Les deux changements sont nécessaires pour éviter à la fois la longueur hors limites et la source non canonique.
+
+**Aucun de ces deux changements n'est encore déclaré jouable.** Le workflow `orbitals-memcpy-size-local-host-layout` inspecte maintenant le prologue x86-64 généré et les accès au local `[rbx-0x98]` dans le DLL exact de la release. Il doit établir le point d'insertion sûr et les octets d'origine avant de produire un patch binaire versionné. Il ne lance ni `setup.py`, ni `prepare.py`, ni génération/recompilation du jeu.
