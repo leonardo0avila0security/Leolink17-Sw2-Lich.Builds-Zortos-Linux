@@ -1,0 +1,48 @@
+name: orbitals-memcpy-size-and-source-patch
+
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - ".github/workflows/orbitals-memcpy-size-and-source-patch.yml"
+      - "tools/nx2/apply_orbitals_memcpy_size_and_source_patch.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-candidate-patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact release runtime (no rebuild)
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output orbitals-recomp.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.zip"
+      - name: Apply version-locked size and source patches
+        run: |
+          python tools/nx2/apply_orbitals_memcpy_size_and_source_patch.py orbitals-recomp.zip -o orbitalgame.dll
+          mkdir -p package
+          cp orbitalgame.dll orbitalgame.dll.patch-report.txt package/
+          printf '%s\n' \
+            'CANDIDATE PATCH — NOT YET GAMEPLAY-VALIDATED.' \
+            'Initializes the guest size local to zero when its conditional write is skipped.' \
+            'Also stores the current guest x1 source pointer into the fallback hostfn descriptor.' \
+            'Version locked to the exact analysis-data orbitalgame.dll hash and PDB GUID.' \
+            'No setup.py, prepare.py, recompilation, or game regeneration is performed.' \
+            > package/README.txt
+          cd package
+          zip -q -j ../orbitals-memcpy-size-and-source-patch.zip *
+      - uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-memcpy-size-and-source-patch
+          path: |
+            orbitalgame.dll
+            orbitalgame.dll.patch-report.txt
+            orbitals-memcpy-size-and-source-patch.zip
+          if-no-files-found: error
+          retention-days: 14
