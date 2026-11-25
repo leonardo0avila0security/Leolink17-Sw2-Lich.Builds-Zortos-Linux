@@ -69,7 +69,8 @@ QWidget#fade_parent {
        <widget class="QFrame" name="loadingCard">
         <property name="minimumSize">
          <size>
-          <width>560</width>
+           <width>544</width>
+
           <height>0</height>
          </size>
         </property>
@@ -135,6 +136,9 @@ QWidget#fade_parent {
            </property>
            <property name="alignment">
             <set>Qt::AlignCenter</set>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
            </property>
           </widget>
          </item>

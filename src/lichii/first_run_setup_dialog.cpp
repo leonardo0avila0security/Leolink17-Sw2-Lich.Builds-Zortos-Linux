@@ -569,6 +569,8 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
     firmware_path = new QLineEdit(firmware_page);
     firmware_path->setReadOnly(true);
     firmware_path->setPlaceholderText(tr("No firmware source selected"));
+    connect(firmware_path, &QLineEdit::textChanged, this,
+            [this] { firmware_imported = false; });
     firmware_layout->addWidget(firmware_path);
 
     auto* firmware_buttons = new QHBoxLayout;
@@ -585,6 +587,7 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
         const QString path = QFileDialog::getOpenFileName(
             this, tr("Select firmware ZIP"), {}, tr("ZIP archives (*.zip)"));
         if (!path.isEmpty()) {
+            firmware_imported = false;
             firmware_path->setText(path);
             firmware_source_is_zip = true;
         }
@@ -592,6 +595,7 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
     connect(firmware_folder_button, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getExistingDirectory(this, tr("Select firmware folder"));
         if (!path.isEmpty()) {
+            firmware_imported = false;
             firmware_path->setText(path);
             firmware_source_is_zip = false;
         }
@@ -626,6 +630,11 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
     keys_path = new QLineEdit(keys_page);
     keys_path->setReadOnly(true);
     keys_path->setPlaceholderText(tr("No prod.keys file selected"));
+    connect(keys_path, &QLineEdit::textChanged, this,
+            [this] {
+                keys_selection_changed = true;
+                firmware_imported = false;
+            });
     keys_layout->addWidget(keys_path);
 
     auto* keys_buttons = new QHBoxLayout;
@@ -640,6 +649,7 @@ FirstRunSetupDialog::FirstRunSetupDialog(QWidget* parent) : QWizard(parent) {
         const QString path = QFileDialog::getOpenFileName(
             this, tr("Select prod.keys"), {}, tr("Prod keys (prod.keys);;Key files (*.keys)"));
         if (!path.isEmpty()) {
+            keys_selection_changed = true;
             keys_path->setText(path);
         }
     });
@@ -680,7 +690,10 @@ bool FirstRunSetupDialog::validateCurrentPage() {
 
     bool keys_available = ContentManager::AreKeysPresent();
     const QString selected_keys = keys_path->text().trimmed();
-    if (!selected_keys.isEmpty()) {
+    if (!selected_keys.isEmpty() &&
+        (keys_selection_changed || selected_keys != installed_keys_path || !keys_available)) {
+        installed_keys_path.clear();
+        firmware_imported = false;
         const auto result = QtCommon::Content::InstallKeys(selected_keys);
         if (result != FirmwareManager::KeyInstallResult::Success) {
             QMessageBox::critical(this, tr("Could not install prod.keys"),
@@ -694,10 +707,11 @@ bool FirstRunSetupDialog::validateCurrentPage() {
                 tr("The selected file was copied, but no valid decryption keys were detected."));
             return false;
         }
-        keys_installed = true;
+        installed_keys_path = selected_keys;
+        keys_selection_changed = false;
     }
 
-    const QString selected_firmware = firmware_path->text().trimmed();
+    const QString selected_firmware = firmware_path->text();
     if (selected_firmware.isEmpty()) {
         return true;
     }
@@ -709,6 +723,12 @@ bool FirstRunSetupDialog::validateCurrentPage() {
         return false;
     }
 
+    if (firmware_imported && selected_firmware == installed_firmware_path &&
+        firmware_source_is_zip == installed_firmware_source_is_zip &&
+        selected_keys == installed_firmware_keys_path) {
+        return true;
+    }
+
     const QFileInfo source(selected_firmware);
     if (!source.exists() || (firmware_source_is_zip ? !source.isFile() : !source.isDir())) {
         QMessageBox::warning(this, tr("Firmware source not found"),
@@ -717,8 +737,14 @@ bool FirstRunSetupDialog::validateCurrentPage() {
     }
 
     const bool installed = firmware_source_is_zip
-                              ? QtCommon::Content::InstallFirmwareZip(selected_firmware)
-                              : QtCommon::Content::InstallFirmware(selected_firmware, false);
+                               ? QtCommon::Content::InstallFirmwareZip(selected_firmware)
+                               : QtCommon::Content::InstallFirmware(selected_firmware, false);
+    if (installed) {
+        installed_firmware_path = selected_firmware;
+        installed_firmware_source_is_zip = firmware_source_is_zip;
+        installed_firmware_keys_path = selected_keys;
+        firmware_imported = true;
+    }
     return installed;
 }
 
@@ -731,10 +757,6 @@ UISettings::Theme FirstRunSetupDialog::selected_theme() const {
 
 UISettings::GameLibraryStyle FirstRunSetupDialog::selected_library_style() const {
     return selected_style;
-}
-
-bool FirstRunSetupDialog::installed_keys() const {
-    return keys_installed;
 }
 
 void FirstRunSetupDialog::BuildThemeList() {

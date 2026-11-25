@@ -856,6 +856,8 @@ add_library(core STATIC
     hle/service/ns/ecommerce_interface.h
     hle/service/ns/factory_reset_interface.cpp
     hle/service/ns/factory_reset_interface.h
+    hle/service/ns/game_list_applications.cpp
+    hle/service/ns/game_list_applications.h
     hle/service/ns/language.cpp
     hle/service/ns/language.h
     hle/service/ns/ns.cpp
@@ -1079,12 +1081,14 @@ add_library(core STATIC
     hle/service/nx2_streamplay.h
     hle/service/nx2_stub_interface.h
     hle/service/nx2_gsv.h
+    hle/service/nx2_hdr_notifications.h
     hle/service/nx2_fence_action.h
     hle/service/nx2_frame_interval.h
     hle/service/nx2_movie_clock.h
     hle/service/nx2_video_input_queue.h
     hle/service/nx2_image_layout.h
     hle/service/nx2_present_pacer.h
+    hle/service/nx2_present_queue.h
     hle/service/nx2_video_ready.h
     hle/service/services.cpp
     hle/service/services.h

@@ -6,6 +6,7 @@
 #include "qt_common/util/game.h"
 
 #include "common/fs/fs.h"
+#include "common/fs/path_util.h"
 #include "core/hle/service/acc/profile_manager.h"
 #include "frontend_common/content_manager.h"
 #include "frontend_common/data_manager.h"
@@ -150,14 +151,21 @@ bool InstallFirmware(const QString& location, bool recursive) {
     // Re-scan VFS for the newly placed firmware files.
     system->GetFileSystemController().CreateFactories(*vfs);
 
+    bool verification_cancelled = false;
     auto VerifyFirmwareCallback = [&](size_t total_size, size_t processed_size) {
         QGuiApplication::processEvents();
         progress->setValue(90 + static_cast<int>((processed_size * 10) / total_size));
-        return progress->wasCanceled();
+        verification_cancelled = progress->wasCanceled();
+        return verification_cancelled;
     };
 
     auto results = ContentManager::VerifyInstalledContents(*QtCommon::system, *QtCommon::provider,
                                                            VerifyFirmwareCallback, true);
+
+    if (verification_cancelled) {
+        progress->close();
+        return false;
+    }
 
     if (results.size() > 0) {
         const auto failed_names =
@@ -166,6 +174,13 @@ bool InstallFirmware(const QString& location, bool recursive) {
         QtCommon::Frontend::Critical(
             tr("Firmware integrity verification failed!"),
             tr("Verification failed for the following files:\n\n%1").arg(failed_names));
+        return false;
+    }
+
+    if (FirmwareManager::VerifyFirmware(*system) != FirmwareManager::FirmwareGood) {
+        result = FirmwareInstallResult::FailedCorrupted;
+        icon = QtCommon::Frontend::Icon::Warning;
+        ShowMessage();
         return false;
     }
 
@@ -367,6 +382,8 @@ void ClearDataDir(FrontendCommon::DataManager::DataDir dir, const std::string& u
     auto dialog = newProgressDialog(tr("Clearing..."), QString(), 0, 0);
     dialog->show();
 
+    LOG_INFO(Frontend, "Clearing {}",
+             Common::FS::PathToUTF8String(FrontendCommon::DataManager::GetDataDir(dir, user_id)));
     FrontendCommon::DataManager::ClearDir(dir, user_id);
 
     dialog->close();

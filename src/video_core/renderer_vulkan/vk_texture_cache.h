@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include "video_core/renderer_vulkan/vk_dlss_network_probe.h"
 #include "video_core/renderer_vulkan/vk_fsr3_upscaler.h"
+#include "video_core/renderer_vulkan/vk_image_reaper.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/renderer_vulkan/vk_streamline_dlss.h"
 #endif
@@ -111,6 +112,9 @@ public:
     void FreeDeferredStagingBuffer(StagingBufferRef& ref);
 
     void TickFrame();
+
+    void DrainImageReaper();
+    void ReapImage(Image& image);
 
     void FlushDeferredClear();
 
@@ -399,6 +403,7 @@ public:
         bool used_this_frame{};
     };
     std::vector<ColorFeedbackSnapshot> color_feedback_snapshots;
+    ImageReaper image_reaper;
 };
 
 class Framebuffer {
@@ -534,6 +539,8 @@ public:
 
     Image(Image&&) = default;
     Image& operator=(Image&&) = default;
+
+    void ReleaseDedicatedImage(ImageReaper& reaper);
 
     u32 HostMipLevels() const noexcept;
 
@@ -842,13 +849,18 @@ private:
     const Device* device = nullptr;
     const SlotVector<Image>* slot_images = nullptr;
 
+    struct NullImages {
+        vk::Image one_dimensional;
+        vk::Image two_dimensional;
+    };
+    std::unique_ptr<NullImages> null_images;
     std::array<vk::ImageView, Shader::NUM_TEXTURE_TYPES> image_views;
     std::optional<StorageViews> storage_views;
     vk::ImageView typeless_storage_view;
     vk::ImageView depth_view;
     vk::ImageView stencil_view;
     vk::ImageView color_view;
-    vk::Image null_image;
+    std::optional<VideoCommon::SubresourceRange> compact_view_range;
     VkImage image_handle = VK_NULL_HANDLE;
     VkImageView render_target = VK_NULL_HANDLE;
     VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;

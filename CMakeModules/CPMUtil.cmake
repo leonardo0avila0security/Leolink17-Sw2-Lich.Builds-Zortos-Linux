@@ -126,15 +126,19 @@ endmacro()
 # presigned asset URL after the redirect keeps working.
 function(cpmutil_netrc_args out_args)
     if(DEFINED ENV{GITHUB_TOKEN})
-        if(NOT CPMUTIL_NETRC OR NOT EXISTS "${CPMUTIL_NETRC}")
-            set(CPMUTIL_NETRC "${CMAKE_BINARY_DIR}/.cpmutil_netrc" CACHE INTERNAL
-                "Path to a netrc file for GitHub downloads" FORCE)
-            file(WRITE "${CPMUTIL_NETRC}" "")
+        if(DEFINED CMAKE_NETRC_FILE AND NOT "${CMAKE_NETRC_FILE}" STREQUAL "")
+            set(${out_args} NETRC OPTIONAL)
+        else()
+            if(NOT CPMUTIL_NETRC OR NOT EXISTS "${CPMUTIL_NETRC}")
+                set(CPMUTIL_NETRC "${CMAKE_BINARY_DIR}/.cpmutil_netrc" CACHE INTERNAL
+                    "Path to a netrc file for GitHub downloads" FORCE)
+                file(WRITE "${CPMUTIL_NETRC}" "")
+            endif()
+            file(CHMOD "${CPMUTIL_NETRC}" PERMISSIONS OWNER_READ OWNER_WRITE)
+            file(WRITE "${CPMUTIL_NETRC}"
+                "machine github.com login oauth2 password $ENV{GITHUB_TOKEN}\n")
+            set(${out_args} NETRC OPTIONAL NETRC_FILE "${CPMUTIL_NETRC}")
         endif()
-        file(CHMOD "${CPMUTIL_NETRC}" PERMISSIONS OWNER_READ OWNER_WRITE)
-        file(WRITE "${CPMUTIL_NETRC}"
-            "machine github.com login oauth2 password $ENV{GITHUB_TOKEN}\n")
-        set(${out_args} NETRC OPTIONAL NETRC_FILE "${CPMUTIL_NETRC}")
     else()
         unset(${out_args})
     endif()
@@ -201,17 +205,28 @@ function(cpm_download url file)
     echo("Downloading ${url} to ${file}")
     list(LENGTH ARGN argn_len)
     if(argn_len GREATER 0)
-        list(GET ARGN 0 hash)
-        set(args EXPECTED_HASH SHA512=${hash})
+        list(GET ARGN 0 expected_hash)
+        string(TOLOWER "${expected_hash}" expected_hash_lower)
+        if(EXISTS "${file}")
+            file(SHA512 "${file}" existing_hash)
+            string(TOLOWER "${existing_hash}" existing_hash)
+            if("${existing_hash}" STREQUAL "${expected_hash_lower}")
+                return()
+            endif()
+        endif()
     else()
-        unset(args)
+        set(expected_hash "")
     endif()
 
     cpmutil_netrc_args(netrc_args)
 
+    string(SHA256 cpm_download_tmp_suffix "${CMAKE_BINARY_DIR}|${url}|${file}")
+    set(download_tmp "${file}.${cpm_download_tmp_suffix}.tmp")
+
+    set(code 1)
+    set(error_message "download did not complete")
     foreach(attempt RANGE 1 8)
-        file(DOWNLOAD "${url}" "${file}"
-            ${args}
+        file(DOWNLOAD "${url}" "${download_tmp}"
             ${netrc_args}
             STATUS ret
             TIMEOUT 300
@@ -219,11 +234,38 @@ function(cpm_download url file)
 
         list(GET ret 0 code)
         list(GET ret 1 error_message)
-        if (code EQUAL 0)
-            break()
+        if(code EQUAL 0 AND expected_hash)
+            if(EXISTS "${download_tmp}")
+                file(SHA512 "${download_tmp}" actual_hash)
+                string(TOLOWER "${actual_hash}" actual_hash)
+                if(NOT "${actual_hash}" STREQUAL "${expected_hash_lower}")
+                    set(code 1)
+                    set(error_message "downloaded file does not match its expected SHA512")
+                endif()
+            else()
+                set(code 1)
+                set(error_message "download completed without creating a file")
+            endif()
         endif()
 
-        file(REMOVE "${file}")
+        if(code EQUAL 0)
+            if(EXISTS "${download_tmp}")
+                file(RENAME "${download_tmp}" "${file}" RESULT rename_result)
+                if(NOT "${rename_result}" STREQUAL "0")
+                    set(code 1)
+                    set(error_message "failed to move downloaded file into place: ${rename_result}")
+                endif()
+            endif()
+            if(code EQUAL 0 AND (EXISTS "${download_tmp}" OR NOT EXISTS "${file}"))
+                set(code 1)
+                set(error_message "failed to move downloaded file into place")
+            endif()
+            if(code EQUAL 0)
+                break()
+            endif()
+        endif()
+
+        file(REMOVE "${download_tmp}")
         if(attempt LESS 8)
             math(EXPR retry_delay "${attempt} * 5")
             if(retry_delay GREATER 30)
@@ -235,6 +277,7 @@ function(cpm_download url file)
     endforeach()
 
     if (NOT code EQUAL 0)
+        file(REMOVE "${download_tmp}")
         fatal("Download for ${url} failed after 8 tries: ${error_message}")
     endif()
 endfunction()
@@ -1085,22 +1128,47 @@ function(AddCIPackage)
         set(cached_sha512_file "${artifact_cache_path}/.cpm_archive_sha512")
 
         # A cached package was already verified against its sha512sum; reuse that hash.
+        set(sha512sum_hash "")
         if(EXISTS "${cached_sha512_file}")
             file(READ "${cached_sha512_file}" sha512sum_hash)
             string(STRIP "${sha512sum_hash}" sha512sum_hash)
-        else()
+            string(LENGTH "${sha512sum_hash}" sha512sum_hash_length)
+            if(NOT sha512sum_hash_length EQUAL 128 OR
+               NOT "${sha512sum_hash}" MATCHES "^[0-9A-Fa-f]+$")
+                file(REMOVE "${cached_sha512_file}")
+                set(sha512sum_hash "")
+            endif()
+        endif()
+
+        if(NOT sha512sum_hash)
             set(sha512sum_url
                 "https://${ARTIFACT_GIT_HOST}/${ARTIFACT_REPO}/releases/download/${ARTIFACT_VERSION}/${ARTIFACT}.sha512sum")
             # Keep the checksum beside the package cache so it survives reconfigures.
             get_cache_path(${ARTIFACT_PACKAGE} "${ARTIFACT_KEY}" ci_cache_path)
             set(sha512sum_file "${ci_cache_path}.sha512sum")
 
-            set(sha512sum_error 1)
-            set(sha512sum_error_message "checksum not cached")
-            if(NOT EXISTS "${sha512sum_file}")
+            if(EXISTS "${sha512sum_file}")
+                file(READ "${sha512sum_file}" sha512sum_hash)
+                string(STRIP "${sha512sum_hash}" sha512sum_hash)
+                string(LENGTH "${sha512sum_hash}" sha512sum_hash_length)
+                if(NOT sha512sum_hash_length EQUAL 128 OR
+                   NOT "${sha512sum_hash}" MATCHES "^[0-9A-Fa-f]+$")
+                    file(REMOVE "${sha512sum_file}")
+                    set(sha512sum_hash "")
+                endif()
+            endif()
+
+            if(NOT sha512sum_hash)
                 cpmutil_netrc_args(sha512sum_netrc_args)
+                # Different build trees share the CPM cache; keep concurrent checksum downloads
+                # from removing or renaming one another's temporary file.
+                string(SHA256 sha512sum_tmp_suffix "${CMAKE_BINARY_DIR}")
+                set(sha512sum_tmp "${sha512sum_file}.${sha512sum_tmp_suffix}.tmp")
+                file(REMOVE "${sha512sum_tmp}")
+                set(sha512sum_error 1)
+                set(sha512sum_error_message "checksum not cached")
                 foreach(attempt RANGE 1 8)
-                    file(DOWNLOAD "${sha512sum_url}" "${sha512sum_file}"
+                    file(DOWNLOAD "${sha512sum_url}" "${sha512sum_tmp}"
                         ${sha512sum_netrc_args}
                         STATUS sha512sum_status
                         TIMEOUT 60
@@ -1108,10 +1176,28 @@ function(AddCIPackage)
                     list(GET sha512sum_status 0 sha512sum_error)
                     list(GET sha512sum_status 1 sha512sum_error_message)
                     if(NOT sha512sum_error)
-                        break()
+                        file(READ "${sha512sum_tmp}" sha512sum_hash)
+                        string(STRIP "${sha512sum_hash}" sha512sum_hash)
+                        string(LENGTH "${sha512sum_hash}" sha512sum_hash_length)
+                        if(sha512sum_hash_length EQUAL 128 AND
+                           "${sha512sum_hash}" MATCHES "^[0-9A-Fa-f]+$")
+                            file(RENAME "${sha512sum_tmp}" "${sha512sum_file}"
+                                RESULT sha512sum_rename_result)
+                            if("${sha512sum_rename_result}" STREQUAL "0")
+                                break()
+                            endif()
+                            set(sha512sum_hash "")
+                            set(sha512sum_error 1)
+                            set(sha512sum_error_message
+                                "failed to move downloaded checksum into place: ${sha512sum_rename_result}")
+                        else()
+                            set(sha512sum_hash "")
+                            set(sha512sum_error 1)
+                            set(sha512sum_error_message "downloaded checksum is not a valid SHA512")
+                        endif()
                     endif()
 
-                    file(REMOVE "${sha512sum_file}")
+                    file(REMOVE "${sha512sum_tmp}")
                     if(attempt LESS 8)
                         math(EXPR retry_delay "${attempt} * 5")
                         if(retry_delay GREATER 30)
@@ -1124,18 +1210,10 @@ function(AddCIPackage)
                 endforeach()
 
                 if(sha512sum_error)
+                    file(REMOVE "${sha512sum_tmp}")
                     message(FATAL_ERROR "[CPMUtil] Failed to download sha512sum "
                         "for ${ARTIFACT_NAME} from ${sha512sum_url}: ${sha512sum_error_message}")
                 endif()
-            endif()
-
-            file(READ "${sha512sum_file}" sha512sum_hash)
-            string(STRIP "${sha512sum_hash}" sha512sum_hash)
-            if(NOT sha512sum_hash)
-                file(REMOVE "${sha512sum_file}")
-                message(FATAL_ERROR "[CPMUtil] Cached checksum for ${ARTIFACT_NAME} is empty. "
-                    "The stale checksum was removed; re-run CMake configuration "
-                    "to download it again.")
             endif()
 
             # Caches extracted before hashes were recorded get the hash now

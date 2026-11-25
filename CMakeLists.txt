@@ -118,7 +118,7 @@ endif()
 
 
 # Lossless Scaling frame generation. Only Android.
-option(ENABLE_LSFG "Enable frame generation (LSFG and FSR 3 Fluid Motion)" ON)
+option(ENABLE_LSFG "Enable frame generation (LSFG and Lichii Optical Flow)" ON)
 
 option(ENABLE_RESHADE "Enable ReShade FX post-processing effects" ON)
 
@@ -667,7 +667,7 @@ if (ENABLE_QT)
     ## Components ##
 
     # Best practice is to ask for all components at once, so they are from the same version
-    set(LICHII_QT_COMPONENTS Core Widgets Concurrent Gui Network)
+    set(LICHII_QT_COMPONENTS Core Widgets Concurrent Gui Network Svg)
     if (LINUX OR FREEBSD)
         list(APPEND LICHII_QT_COMPONENTS DBus)
         # yes Qt, we get it

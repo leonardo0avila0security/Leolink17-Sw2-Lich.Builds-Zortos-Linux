@@ -133,10 +133,9 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
 
     PopulateSelectionList();
 
-    
     connect(ui_tab.get(), &ConfigureUi::GameLibraryStyleChanged, this,
             &ConfigureDialog::SetModernStyleEnabled);
-connect(ui->tabWidget, &QTabWidget::currentChanged, this, [this](int index) {
+    connect(ui->tabWidget, &QTabWidget::currentChanged, this, [this](int index) {
         if (index != -1) {
             debug_tab_tab->SetCurrentIndex(0);
         }
@@ -341,6 +340,7 @@ void ConfigureDialog::OnLanguageChanged(const QString& locale) {
     //  Reloading the game list is needed to force retranslation.
     UISettings::values.is_game_list_reload_pending = true;
     // first apply the configuration, and then restore the display
+    UISettings::values.configuration_applied = true;
     ApplyConfiguration();
     RetranslateUI();
     SetConfiguration();

@@ -657,9 +657,23 @@ KeyManager::KeyManager() {
     ReloadKeys();
 }
 
+std::unique_ptr<KeyManager> KeyManager::CreateForDirectory(const std::filesystem::path& keys_dir) {
+    auto manager = std::unique_ptr<KeyManager>(new KeyManager());
+    manager->ReloadKeys(keys_dir);
+    return manager;
+}
+
 void KeyManager::ReloadKeys() {
+    LoadKeysFrom(Common::FS::GetEdenPath(Common::FS::EdenPath::KeysDir));
+}
+
+void KeyManager::ReloadKeys(const std::filesystem::path& keys_dir) {
+    ClearKeys();
+    LoadKeysFrom(keys_dir);
+}
+
+void KeyManager::LoadKeysFrom(const std::filesystem::path& keys_dir) {
     // Initialize keys
-    const auto keys_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::KeysDir);
     if (!Common::FS::CreateDir(keys_dir))
         LOG_ERROR(Core, "Failed to create the keys directory.");
     if (Settings::values.use_dev_keys.GetValue()) {
@@ -677,6 +691,23 @@ void KeyManager::ReloadKeys() {
     LoadFromFile(keys_dir / "console.keys", false);
 
     DeriveMissingMasterKeys();
+}
+
+void KeyManager::ClearKeys() {
+    s128_keys.clear();
+    s256_keys.clear();
+    common_tickets.clear();
+    personal_tickets.clear();
+    ticket_databases_loaded = false;
+    encrypted_keyblobs = {};
+    keyblobs = {};
+    eticket_extended_kek = {};
+    eticket_rsa_keypair = {};
+}
+
+void KeyManager::ResetKeys() {
+    ClearKeys();
+    ReloadKeys();
 }
 
 static bool ValidCryptoRevisionString(std::string_view base, size_t begin, size_t length) {
@@ -984,6 +1015,18 @@ void KeyManager::SetKey(S256KeyType id, Key256 key, u64 field1, u64 field2) {
     if (iter != s256_file_id.end()) {
         WriteKeyToFile(KeyCategory::Standard, iter->first, key);
     }
+    s256_keys[{id, field1, field2}] = key;
+}
+
+std::optional<Key256> KeyManager::TakeKeyForTest(S256KeyType id, u64 field1, u64 field2) {
+    const auto node = s256_keys.extract({id, field1, field2});
+    if (node.empty()) {
+        return std::nullopt;
+    }
+    return node.mapped();
+}
+
+void KeyManager::RestoreKeyForTest(S256KeyType id, const Key256& key, u64 field1, u64 field2) {
     s256_keys[{id, field1, field2}] = key;
 }
 

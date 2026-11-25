@@ -79,9 +79,10 @@ public:
     void SetFilterFocus();
     void SetFilterVisible(bool visibility);
     bool IsEmpty() const;
+    bool IsPopulating() const;
 
     void PopulateAsync(QVector<UISettings::GameDir>& game_dirs);
-    void SetScanEnabled(bool enabled);
+    void SetScanEnabled(bool enabled, bool stop_worker = true);
     void SetReportableProgramId(u64 program_id);
 
     void SaveInterfaceLayout();
@@ -119,6 +120,7 @@ signals:
     void OpenTransferableShaderCacheRequested(u64 program_id);
     void PrepareShaderWarmRequested(u64 program_id, const std::string& game_path);
     void DeleteShaderWarmRequested(u64 program_id);
+    void PrecompileShadersRequested(u64 program_id, const std::string& game_path, bool on);
     void RemoveInstalledEntryRequested(u64 program_id, QtCommon::Game::InstalledEntryType type);
     void RemoveFileRequested(u64 program_id, QtCommon::Game::GameListRemoveTarget target,
                              const std::string& game_path);
@@ -212,8 +214,10 @@ private:
     bool m_isFlat = false;
     bool m_populating = false;
     int grid_root_dir_index_to_restore = -1;
-    /// Set while a mouse double-click is being processed; its trailing activated signal is skipped.
+    /// Set while a left mouse double-click is being processed; its trailing activated signal is
+    /// skipped.
     bool grid_mouse_activated = false;
+    bool grid_mouse_left_double_click = false;
     bool nup_conversion_running{};
     bool nx_tool_running{};
     u64 reportable_program_id{};

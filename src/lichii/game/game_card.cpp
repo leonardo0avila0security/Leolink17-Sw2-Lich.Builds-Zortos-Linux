@@ -3,12 +3,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <QtConcurrent/QtConcurrentRun>
+#include <QAbstractItemView>
 #include <QColor>
+#include <QFutureWatcher>
 #include <QFileInfo>
 #include <QFont>
 #include <QHash>
 #include <QImage>
 #include <QImageReader>
+#include <QPointer>
 #include <QPainter>
 #include <QPainterPath>
 #include <QRectF>
@@ -220,11 +224,42 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
     painter->drawRoundedRect(cardRect, radius, radius);
 
     const u32 icon_size = UISettings::values.game_cover_size.GetValue();
-    const QPixmap icon_pixmap = game_folder || add_folder
-                                    ? QPixmap{}
-                                    : index.data(GameListItemPath::CardIconRole).value<QPixmap>();
+    const QString card_icon_key = index.data(GameListItemPath::CardIconRole).toString();
     const bool has_icon = !game_folder && !add_folder &&
                           index.data(GameListItemPath::HasIconRole).toBool();
+    QPixmap icon_pixmap;
+    if (icon_size > 0 && has_icon && !card_icon_key.isEmpty()) {
+        icon_pixmap = GameListItemPath::CardArtCache::Lookup(card_icon_key);
+        if (icon_pixmap.isNull() && !pending_card_art.contains(card_icon_key)) {
+            const QByteArray card_art_data =
+                index.data(GameListItemPath::CardArtDataRole).toByteArray();
+            const int card_target = static_cast<int>(
+                std::max<u32>(UISettings::CurrentGameIconSize().GetValue(), u32{384}));
+            pending_card_art.insert(card_icon_key);
+            auto* watcher = new QFutureWatcher<QImage>(const_cast<GameCard*>(this));
+            QPointer<QWidget> viewport;
+            if (const auto* view = qobject_cast<const QAbstractItemView*>(option.widget)) {
+                viewport = view->viewport();
+            }
+            connect(watcher, &QFutureWatcher<QImage>::finished, this,
+                    [this, watcher, card_icon_key, viewport] {
+                        const QImage decoded = watcher->result();
+                        if (!decoded.isNull()) {
+                            GameListItemPath::CardArtCache::Insert(card_icon_key,
+                                                                   QPixmap::fromImage(decoded));
+                            if (viewport) {
+                                viewport->update();
+                            }
+                        }
+                        pending_card_art.remove(card_icon_key);
+                        watcher->deleteLater();
+                    });
+            watcher->setFuture(QtConcurrent::run([card_art_data, card_target] {
+                return GameListItemPath::ReloadCardArtImage(card_art_data, card_target);
+            }));
+        }
+    }
+
     const bool folder_cards = option.widget &&
                               option.widget->objectName() == QStringLiteral("gameGridView");
     const bool show_game_name = UISettings::values.show_game_name.GetValue() ||
@@ -249,7 +284,7 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
         const QColor accent = selected ? palette.highlightedText().color()
                                        : palette.highlight().color();
         DrawGameFolderArtwork(painter, artworkRect, accent, dark);
-    } else {
+    } else if (icon_size > 0) {
         const QPixmap artwork = has_icon
                                     ? (icon_pixmap.isNull()
                                            ? index.data(Qt::DecorationRole).value<QPixmap>()
@@ -287,10 +322,11 @@ void GameCard::paint(QPainter* painter, const QStyleOptionViewItem& option,
                 }
             }
         } else {
-            const QString full = index.data(GameListItemPath::TitleRole).toString();
-            title = full.isEmpty()
-                        ? index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0)
-                        : full;
+            const QString display = index.data(Qt::DisplayRole).toString();
+            const QString full = display.isEmpty()
+                                     ? index.data(GameListItemPath::TitleRole).toString()
+                                     : display;
+            title = full.section(QLatin1Char('\n'), 0, 0);
         }
 
         painter->setPen(titleColor);
@@ -390,13 +426,22 @@ bool GameCard::hitTest(const QPoint& point, const QModelIndex& index, const QWid
 }
 
 QSize GameCard::sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const {
-    return m_size;
+    QSize size = m_size;
+    const auto item_type = index.data(GameListItem::TypeRole).value<GameListItemType>();
+    const bool folder_card = IsGameDirectory(item_type) || item_type == GameListItemType::AddDir;
+    const bool folder_labels = option.widget &&
+                               option.widget->objectName() == QStringLiteral("gameGridView");
+    if (folder_card && folder_labels) {
+        size.setHeight(size.height() + m_folder_label_extra_height);
+    }
+    return size;
 }
 
 void GameCard::setSize(const QSize& newSize, const QSize& contentSize, const int padding,
-                       const int columns) {
+                       const int columns, const int folder_label_extra_height) {
     m_size = newSize;
     m_contentSize = contentSize;
     m_padding = padding;
     m_columns = columns;
+    m_folder_label_extra_height = folder_label_extra_height;
 }

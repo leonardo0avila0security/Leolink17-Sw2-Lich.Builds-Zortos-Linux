@@ -8,6 +8,7 @@
 #include <array>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -279,6 +280,11 @@ public:
     void SetKey(S128KeyType id, Key128 key, u64 field1 = 0, u64 field2 = 0);
     void SetKey(S256KeyType id, Key256 key, u64 field1 = 0, u64 field2 = 0);
 
+    /// Tests only: takes a key out of memory and returns it (the key files are left alone).
+    std::optional<Key256> TakeKeyForTest(S256KeyType id, u64 field1 = 0, u64 field2 = 0);
+    /// Tests only: puts back a key TakeKeyForTest returned, in memory only.
+    void RestoreKeyForTest(S256KeyType id, const Key256& key, u64 field1 = 0, u64 field2 = 0);
+
     static bool KeyFileExists(bool title);
 
     // Call before using the sd seed to attempt to derive it if it doesn't exist. Needs system
@@ -298,11 +304,19 @@ public:
 
     bool AddTicket(const Ticket& ticket);
 
+    static std::unique_ptr<KeyManager> CreateForDirectory(const std::filesystem::path& keys_dir);
+
     void ReloadKeys();
+    /// Forgets every key, keyblob and ticket, then reads the key files again, leaving the manager
+    /// as a new one would be. ReloadKeys only adds to what is loaded.
+    void ResetKeys();
     bool AreKeysLoaded() const;
 
 private:
     KeyManager();
+    void ClearKeys();
+    void ReloadKeys(const std::filesystem::path& keys_dir);
+    void LoadKeysFrom(const std::filesystem::path& keys_dir);
 
     std::map<KeyIndex<S128KeyType>, Key128> s128_keys;
     std::map<KeyIndex<S256KeyType>, Key256> s256_keys;
