@@ -147,6 +147,21 @@ with DMP.open("rb") as f:
             lines.append(f"\n{label} RVA=[{lo_rva:#x},{hi_rva:#x}) VA={va:#x}")
             blob=readva(f,rs,va,size)
             lines += disasm(md,blob,va,1000)
+    # Write dedicated, complete disassembly files so long listings are not
+    # truncated in the Actions console.
+    if game:
+        gbase,gsize,gname=game
+        caller_lo=gbase+0x1B5A8E00
+        caller_len=0x700
+        caller_blob=readva(f,rs,caller_lo,caller_len)
+        (OUT/"guest_caller_1B5A8E00.txt").write_text(
+            "\\n".join([f"module={gname}",f"base={gbase:#x}",f"window={caller_lo:#x}+{caller_len:#x}"]+disasm(md,caller_blob,caller_lo,2000)),
+            encoding="utf-8")
+        wrapper_va=gbase+0x1C11DF00
+        wrapper_blob=readva(f,rs,wrapper_va-0x100,0x500)
+        (OUT/"guest_memcpy_wrapper_1C11DF00.txt").write_text(
+            "\\n".join([f"module={gname}",f"wrapper_va={wrapper_va:#x}",f"window={wrapper_va-0x100:#x}+0x500"]+disasm(md,wrapper_blob,wrapper_va-0x100,1000)),
+            encoding="utf-8")
     # Inspect the helper's optional large-copy tracking callback target.
     if exe:
         base,imagesz,exename=exe
