@@ -2,7 +2,7 @@
 """Unwind the real AMD64 call stack from an existing Windows minidump.
 
 Reads the ExceptionStream context and applies the loaded modules' PE .pdata/.xdata
-RUNTIME_FUNCTION records. It deliberately does not treat arbitrary code-looking
+RUNTIME_FUNCTION records. Reports active callsites, not arbitrary stack-word matches. Analysis revision: 2026-11-25. It deliberately does not treat arbitrary code-looking
 qwords on the stack as active return addresses.
 """
 import argparse
