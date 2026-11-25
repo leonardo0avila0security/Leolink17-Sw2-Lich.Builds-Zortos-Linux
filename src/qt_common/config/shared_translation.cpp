@@ -204,8 +204,8 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
                       "libxess.dll in the xess directory under Lichii's user data folder or next "
                       "to the executable. "
                       "If XeSS is unavailable, FSR 3.1 is used "
-                      "when supported, otherwise the native game path remains active. NVIDIA DLSS takes "
-                      "precedence when enabled and available. Takes effect when a game starts."));
+                      "when supported, otherwise the native game path remains active. With the Legacy "
+                      "upscaler, NVIDIA DLSS takes precedence when enabled and available. Takes effect when a game starts."));
         INSERT(Settings, ocarina_render_scale, tr("Ocarina render scale:"),
                tr("Legacy scale Ocarina of Time's internal render resolution. Keep this setting for "
                                           "backward compatibility; the independent Render Input setting supersedes it."));
