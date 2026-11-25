@@ -121,6 +121,20 @@ with DMP.open("rb") as f:
         src=struct.unpack_from("<Q",desc,8)[0]
         lines.append("source qword = "+src.to_bytes(8,"little").hex(" "))
         lines.append("u16 words = "+", ".join(f"{x:#06x}" for x in struct.unpack("<4H",src.to_bytes(8,"little"))))
+    # Inspect the exact native helper and thunk identified in the stack.
+    exe=next(((b,z,n) for b,z,n in mods if n.lower().endswith("orbitals-recomp.exe")),None)
+    lines += ["","NATIVE HELPER / THUNK DISASSEMBLY:"]
+    if exe:
+        base,imagesz,exename=exe
+        lines.append(f"EXE {exename} imagebase={base:#x} size={imagesz:#x}")
+        for label,rva in (("helper_40CE0",0x40CE0),("thunk_70C430",0x70C430)):
+            va=base+rva
+            lines.append(f"\n{label} RVA={rva:#x} VA={va:#x}")
+            lo=max(base,va-0x60); hi=min(base+imagesz,va+0x180)
+            blob=readva(f,rs,lo,hi-lo)
+            lines += disasm(md,blob,lo,100)
+    else:
+        lines.append("orbitals-recomp.exe module not found")
     lines += ["","DISASSEMBLY AROUND RIP:"]+disasm(md,readva(f,rs,max(0,rip-0x40),0x200),max(0,rip-0x40),100)
     (OUT/"exception_context.txt").write_text("\n".join(lines),encoding="utf-8")
     print("\n".join(lines[-180:]))
