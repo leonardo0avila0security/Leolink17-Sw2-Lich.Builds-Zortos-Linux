@@ -135,6 +135,25 @@ with DMP.open("rb") as f:
             lines += disasm(md,blob,lo,100)
     else:
         lines.append("orbitals-recomp.exe module not found")
+    # Disassemble the exact guest caller region containing the wrapper call
+    # and the suspected (2-index)*0x38 calculation.
+    game=next(((b,z,n) for b,z,n in mods if n.lower().endswith("orbitalgame.dll")),None)
+    lines += ["","GUEST CALLER WINDOWS:"]
+    if game:
+        gbase,gsize,gname=game
+        lines.append(f"GAME {gname} imagebase={gbase:#x} size={gsize:#x}")
+        for label,lo_rva,hi_rva in (("caller_index_and_memcpy",0x1B5A8E00,0x1B5A9500),):
+            va=gbase+lo_rva; size=hi_rva-lo_rva
+            lines.append(f"\n{label} RVA=[{lo_rva:#x},{hi_rva:#x}) VA={va:#x}")
+            blob=readva(f,rs,va,size)
+            lines += disasm(md,blob,va,1000)
+    # Inspect the helper's optional large-copy tracking callback target.
+    if exe:
+        base,imagesz,exename=exe
+        va=base+0x4AFCD0
+        lines += ["","LARGE-COPY TRACKER CALLBACK TARGET:",f"VA={va:#x} RVA=0x4AFCD0"]
+        lo=va; blob=readva(f,rs,lo,0x300)
+        lines += disasm(md,blob,lo,180)
     lines += ["","DISASSEMBLY AROUND RIP:"]+disasm(md,readva(f,rs,max(0,rip-0x40),0x200),max(0,rip-0x40),100)
     (OUT/"exception_context.txt").write_text("\n".join(lines),encoding="utf-8")
     print("\n".join(lines[-180:]))
