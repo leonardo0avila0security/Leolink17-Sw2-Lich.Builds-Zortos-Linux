@@ -6,10 +6,35 @@
 #include <string_view>
 
 #include "common/common_types.h"
+#include "common/settings_enums.h"
 
 namespace VideoCommon {
 
 enum class OcarinaUpscaleBackend { Native, Fsr, Dlss, Xess };
+
+constexpr bool IsOcarinaXeSSRequested(Settings::OcarinaUpscaler selection,
+                                      bool legacy_xess_enabled,
+                                      std::string_view replacement_override) {
+    if (replacement_override == "native") {
+        return false;
+    }
+    switch (selection) {
+    case Settings::OcarinaUpscaler::Xess:
+        return true;
+    case Settings::OcarinaUpscaler::Legacy:
+        if (replacement_override == "xess") {
+            return true;
+        }
+        if (replacement_override == "fsr" || replacement_override == "dlss") {
+            return false;
+        }
+        return legacy_xess_enabled;
+    case Settings::OcarinaUpscaler::Fsr:
+    case Settings::OcarinaUpscaler::Off:
+        return false;
+    }
+    return false;
+}
 
 /// The game's output passes the temporal upscaler can replace.
 enum class OcarinaUpscalePass {

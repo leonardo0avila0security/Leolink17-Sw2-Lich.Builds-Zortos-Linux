@@ -35,6 +35,20 @@ TEST_CASE("OoT temporal backend selection is opt-in and vendor neutral", "[video
     CHECK(SelectOcarinaUpscaler(false, true, false, false, "dlss", true, true) == Native);
 }
 
+TEST_CASE("OoT XeSS runtime request follows backend selection and override", "[video_core][ocarina]") {
+    using Setting = Settings::OcarinaUpscaler;
+    using VideoCommon::IsOcarinaXeSSRequested;
+    CHECK(IsOcarinaXeSSRequested(Setting::Legacy, false, "xess"));
+    CHECK(IsOcarinaXeSSRequested(Setting::Legacy, true, ""));
+    CHECK_FALSE(IsOcarinaXeSSRequested(Setting::Legacy, true, "native"));
+    CHECK_FALSE(IsOcarinaXeSSRequested(Setting::Legacy, true, "fsr"));
+    CHECK_FALSE(IsOcarinaXeSSRequested(Setting::Legacy, true, "dlss"));
+    CHECK(IsOcarinaXeSSRequested(Setting::Xess, false, "dlss"));
+    CHECK_FALSE(IsOcarinaXeSSRequested(Setting::Xess, false, "native"));
+    CHECK_FALSE(IsOcarinaXeSSRequested(Setting::Fsr, true, "xess"));
+    CHECK_FALSE(IsOcarinaXeSSRequested(Setting::Off, true, "xess"));
+}
+
 TEST_CASE("OoT FSR texture LOD bias follows the upscaler, the console mode and failure",
           "[video_core][ocarina]") {
     using enum VideoCommon::OcarinaUpscaleBackend;

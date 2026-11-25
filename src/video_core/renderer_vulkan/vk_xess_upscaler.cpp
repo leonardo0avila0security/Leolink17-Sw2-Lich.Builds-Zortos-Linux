@@ -224,6 +224,7 @@ struct XessUpscaler::Impl {
             .components{},
             .subresourceRange = COLOR_RANGE,
         });
+        intermediate_extent = extent;
         intermediate_initialized.store(false, std::memory_order_relaxed);
     }
 
@@ -240,7 +241,13 @@ struct XessUpscaler::Impl {
         }
         intermediate_view = {};
         intermediate_image = {};
+        intermediate_extent = {};
         intermediate_initialized.store(false, std::memory_order_relaxed);
+        allocation_pending.store(false, std::memory_order_release);
+        intermediate_release_pending.store(false, std::memory_order_release);
+        allocation_intermediate_extent = {};
+        initialization_input_size = {};
+        initialization_output_size = {};
         ready.store(false, std::memory_order_release);
         initialization_scheduled.store(false, std::memory_order_release);
         first_execution = true;
@@ -401,19 +408,19 @@ struct XessUpscaler::Impl {
             initialization_scheduled.store(false, std::memory_order_release);
             return;
         }
-        if (use_intermediate && !intermediate_image) {
-            try {
-                CreateIntermediate(xess_extent);
-            } catch (const vk::Exception&) {
-                intermediate_view = {};
-                intermediate_image = {};
-                LogFallback(input_size, output_extent, aa, use_intermediate, xess_extent, optimal,
-                            minimum, maximum, "could not allocate the XeSS intermediate image");
-                rejected_input_size = input_size;
-                rejected_output_size = output_extent;
-                initialization_scheduled.store(false, std::memory_order_release);
-                return;
-            }
+        const bool output_mismatch =
+            !output_image || output_size.width != output_extent.width ||
+            output_size.height != output_extent.height;
+        const bool intermediate_mismatch = use_intermediate &&
+            (!intermediate_image || intermediate_extent.width != xess_extent.width ||
+             intermediate_extent.height != xess_extent.height);
+        if (output_mismatch || intermediate_mismatch) {
+            allocation_input_size = input_size;
+            allocation_output_size = output_extent;
+            allocation_intermediate_extent = use_intermediate ? xess_extent : VkExtent2D{};
+            allocation_pending.store(true, std::memory_order_release);
+            initialization_scheduled.store(false, std::memory_order_release);
+            return;
         }
         constexpr u32 flags = XESS_INIT_FLAG_LDR_INPUT_COLOR;
         if (api->build_pipelines(context, VK_NULL_HANDLE, false, flags) < 0) {
@@ -436,9 +443,7 @@ struct XessUpscaler::Impl {
         if (init_result == XESS_RESULT_ERROR_DEVICE_OUT_OF_MEMORY) {
             api->destroy_context(context);
             context = nullptr;
-            intermediate_view = {};
-            intermediate_image = {};
-            intermediate_initialized.store(false, std::memory_order_relaxed);
+            intermediate_release_pending.store(true, std::memory_order_release);
             LogFallback(input_size, output_extent, aa, use_intermediate, xess_extent, optimal,
                         minimum, maximum, "device ran out of memory while initializing XeSS");
             rejected_input_size = input_size;
@@ -464,6 +469,7 @@ struct XessUpscaler::Impl {
         using_fallback_preset = sdk_quality != selected_quality;
         preferred_fallback_quality.reset();
         ready.store(true, std::memory_order_release);
+        initialization_scheduled.store(false, std::memory_order_release);
         LOG_INFO(Render_Vulkan,
              "XeSS-SR initialized for Ocarina input {}x{}, XeSS output {}x{}, window {}x{} "
              "quality={}", input_size.width, input_size.height, xess_extent.width,
@@ -676,6 +682,14 @@ struct XessUpscaler::Impl {
     std::atomic<bool> failed{};
 #ifdef _WIN32
     xess_context_handle_t context{};
+    std::atomic<bool> allocation_pending{};
+    std::atomic<bool> intermediate_release_pending{};
+    VkExtent2D allocation_input_size{};
+    VkExtent2D allocation_output_size{};
+    VkExtent2D allocation_intermediate_extent{};
+    VkExtent2D initialization_input_size{};
+    VkExtent2D initialization_output_size{};
+    VkExtent2D intermediate_extent{};
     VkExtent2D xess_output_size{};
     VkExtent2D configured_output_size{};
     VkExtent2D configured_input_size{};
@@ -724,6 +738,14 @@ bool XessUpscaler::Failed() const noexcept {
     return impl->failed.load(std::memory_order_acquire);
 }
 
+bool XessUpscaler::InitializationPending() const noexcept {
+#ifdef _WIN32
+    return impl->initialization_scheduled.load(std::memory_order_acquire);
+#else
+    return false;
+#endif
+}
+
 bool XessUpscaler::RejectsInput(VkExtent2D input_size, VkExtent2D output_size) const noexcept {
 #ifdef _WIN32
     const Impl& state = *impl;
@@ -766,15 +788,33 @@ bool XessUpscaler::Upscale(const Inputs& inputs) {
     const bool use_intermediate = input_larger || !aspect_matches;
     state.UpdateFallbackConfiguration(inputs.render_size, inputs.output_size, use_aa,
                                      use_intermediate);
-    if (state.output_size.width != inputs.output_size.width ||
-        state.output_size.height != inputs.output_size.height) {
-        if (state.output_size.width != 0 || state.context) {
+    const bool output_changed = state.output_size.width != 0 &&
+        (state.output_size.width != inputs.output_size.width ||
+         state.output_size.height != inputs.output_size.height);
+    const bool ready_before_resize = state.ready.load(std::memory_order_acquire);
+    const bool initialization_scheduled =
+        state.initialization_scheduled.load(std::memory_order_acquire);
+    const bool allocation_pending = state.allocation_pending.load(std::memory_order_acquire);
+    const bool scheduled_pair_changed = !ready_before_resize && initialization_scheduled &&
+        (state.initialization_input_size.width != inputs.render_size.width ||
+         state.initialization_input_size.height != inputs.render_size.height ||
+         state.initialization_output_size.width != inputs.output_size.width ||
+         state.initialization_output_size.height != inputs.output_size.height);
+    const bool allocation_pair_changed = allocation_pending &&
+        (state.allocation_input_size.width != inputs.render_size.width ||
+         state.allocation_input_size.height != inputs.render_size.height ||
+         state.allocation_output_size.width != inputs.output_size.width ||
+         state.allocation_output_size.height != inputs.output_size.height);
+    if (output_changed || scheduled_pair_changed || allocation_pair_changed) {
+        if (state.output_size.width != 0 || state.context || initialization_scheduled ||
+            allocation_pending) {
             state.DestroyContext();
         }
-        state.CreateOutput(inputs.output_size);
-    }
-    if (!state.output_image) {
-        state.CreateOutput(inputs.output_size);
+        if (output_changed) {
+            state.output_view = {};
+            state.output_image = {};
+            state.output_size = {};
+        }
     }
     bool ready = state.ready.load(std::memory_order_acquire);
     if (ready && state.using_fallback_preset &&
@@ -801,6 +841,15 @@ bool XessUpscaler::Upscale(const Inputs& inputs) {
         state.DestroyContext();
         ready = false;
     }
+    if (state.failed.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (state.intermediate_release_pending.exchange(false, std::memory_order_acq_rel)) {
+        state.intermediate_view = {};
+        state.intermediate_image = {};
+        state.intermediate_extent = {};
+        state.intermediate_initialized.store(false, std::memory_order_relaxed);
+    }
     if (!ready) {
         const bool same_rejected_dimensions =
             !state.initialization_scheduled.load(std::memory_order_acquire) &&
@@ -811,7 +860,52 @@ bool XessUpscaler::Upscale(const Inputs& inputs) {
         if (same_rejected_dimensions) {
             return false;
         }
+        if (state.allocation_pending.exchange(false, std::memory_order_acq_rel)) {
+            try {
+                if (!state.output_image || state.output_size.width != inputs.output_size.width ||
+                    state.output_size.height != inputs.output_size.height) {
+                    state.CreateOutput(inputs.output_size);
+                }
+                if (state.allocation_intermediate_extent.width != 0 &&
+                    (!state.intermediate_image ||
+                     state.intermediate_extent.width != state.allocation_intermediate_extent.width ||
+                     state.intermediate_extent.height != state.allocation_intermediate_extent.height)) {
+                    state.CreateIntermediate(state.allocation_intermediate_extent);
+                }
+            } catch (const vk::Exception& error) {
+                if (error.GetResult() == VK_ERROR_DEVICE_LOST) {
+                    throw;
+                }
+                state.output_view = {};
+                state.output_image = {};
+                state.output_size = {};
+                state.intermediate_view = {};
+                state.intermediate_image = {};
+                state.intermediate_extent = {};
+                state.rejected_input_size = inputs.render_size;
+                state.rejected_output_size = inputs.output_size;
+                state.LogFallback(inputs.render_size, inputs.output_size, use_aa,
+                                  use_intermediate, state.xess_output_size, state.optimal_input,
+                                  state.minimum_input, state.maximum_input,
+                                  error.GetResult() == VK_ERROR_OUT_OF_HOST_MEMORY ||
+                                          error.GetResult() == VK_ERROR_OUT_OF_DEVICE_MEMORY
+                                      ? "could not allocate XeSS output resources"
+                                      : "could not create XeSS output resources");
+                return false;
+            }
+            state.initialization_input_size = inputs.render_size;
+            state.initialization_output_size = inputs.output_size;
+            state.initialization_scheduled.store(true, std::memory_order_release);
+            state.scheduler.Record([&state, input_size = inputs.render_size,
+                                    output_size = inputs.output_size, use_aa,
+                                    use_intermediate](vk::CommandBuffer) {
+                state.Initialize(input_size, output_size, use_aa, use_intermediate);
+            });
+            return false;
+        }
         if (!state.initialization_scheduled.exchange(true, std::memory_order_acq_rel)) {
+            state.initialization_input_size = inputs.render_size;
+            state.initialization_output_size = inputs.output_size;
             state.scheduler.Record([&state, input_size = inputs.render_size,
                                     output_size = inputs.output_size, use_aa,
                                     use_intermediate](vk::CommandBuffer) {

@@ -3,11 +3,14 @@
 
 #include "video_core/vulkan_common/xess_runtime.h"
 
+#include <cstdlib>
 #include <mutex>
+#include <string_view>
 
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "video_core/ocarina_upscale.h"
 
 #ifdef _WIN32
 #include <array>
@@ -52,10 +55,10 @@ bool Resolve(HMODULE module, const char* name, Function& function) {
 } // namespace
 
 bool IsRequested() {
-    const auto selection = Settings::values.ocarina_upscaler.GetValue();
-    return selection == Settings::OcarinaUpscaler::Xess ||
-           (selection == Settings::OcarinaUpscaler::Legacy &&
-            Settings::values.ocarina_xess.GetValue());
+    const char* const override = std::getenv("EDEN_NX2_DLSS_REPLACEMENT");
+    return VideoCommon::IsOcarinaXeSSRequested(
+        Settings::values.ocarina_upscaler.GetValue(), Settings::values.ocarina_xess.GetValue(),
+        override ? override : "");
 }
 
 bool Start() {

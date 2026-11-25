@@ -942,6 +942,14 @@ bool OcarinaUpscaler::UsedXeSS() const {
     return impl->output_xess;
 }
 
+bool OcarinaUpscaler::XeSSFailed() const {
+    return impl->xess && impl->xess->Failed();
+}
+
+bool OcarinaUpscaler::XeSSPending() const {
+    return impl->xess && impl->xess->InitializationPending();
+}
+
 void OcarinaUpscaler::CleanupFailedXeSS() {
     impl->CleanupFailedXeSS();
 }

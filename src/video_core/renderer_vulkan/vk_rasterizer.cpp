@@ -5569,6 +5569,59 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
     // Without Link's pose the mesh stays empty and the motion comes from the camera alone.
     OcarinaActorMesh mesh{};
     ReadOcarinaActor(mesh);
+    const VkExtent2D target_extent{target.size.width, target.size.height};
+    const auto framebuffer_layout = emu_window.GetFramebufferLayout();
+    const auto& screen = framebuffer_layout.screen;
+    const VkExtent2D window_extent{screen.GetWidth(), screen.GetHeight()};
+    const bool new_output_setting =
+        Settings::values.ocarina_upscale_output.GetValue() !=
+        Settings::OcarinaUpscaleOutput::Legacy;
+    const bool window_sized_output =
+        upscale_4k &&
+        (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+         oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess) &&
+        (window_extent.width != 0 && window_extent.height != 0);
+    std::array<f32, 2> jitter{};
+    if (oot_jitter_frame == render_trace_frame) {
+        jitter = oot_jitter_offset;
+    }
+    const auto resolved_output =
+        Settings::OcarinaUpscaleOutputResolution(window_extent.width, window_extent.height);
+    VkExtent2D independent_output{resolved_output.width, resolved_output.height};
+    if (independent_output.width == 0 || independent_output.height == 0) {
+        independent_output = {3840, 2160};
+    }
+    const VkExtent2D output_extent =
+        native_resolution ? extent
+        : upscale_4k && new_output_setting &&
+                  (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+                   oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess)
+            ? independent_output
+        : window_sized_output ? window_extent
+        : upscale_4k ? VkExtent2D{3840, 2160}
+                     : target_extent;
+    if (oot_allocation_failed) {
+        if (oot_failed_input_extent.width == extent.width &&
+            oot_failed_input_extent.height == extent.height &&
+            oot_failed_output_extent.width == output_extent.width &&
+            oot_failed_output_extent.height == output_extent.height) {
+            return fail("temporal allocation previously failed at this extent");
+        }
+        oot_allocation_failed = false;
+    }
+    VkExtent2D fsr_output_extent = output_extent;
+    bool fsr_ratio_clamped = false;
+    if (fsr_output_extent.width < extent.width || fsr_output_extent.height < extent.height) {
+        fsr_output_extent = extent;
+    }
+    const f64 fsr_ratio = std::max(
+        static_cast<f64>(fsr_output_extent.width) / extent.width,
+        static_cast<f64>(fsr_output_extent.height) / extent.height);
+    if (fsr_ratio > 4.0) {
+        fsr_output_extent = {static_cast<u32>(std::llround(extent.width * 4.0)),
+                             static_cast<u32>(std::llround(extent.height * 4.0))};
+        fsr_ratio_clamped = true;
+    }
     try {
         const auto target_view =
             target.StorageView(Shader::TextureType::Color2D, Shader::ImageFormat::Typeless, false);
@@ -5577,64 +5630,10 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
         if (!target_view || (upscale_4k && !scene_reference)) {
             return fail("no upscale target view");
         }
-        const VkExtent2D target_extent{target.size.width, target.size.height};
-        const auto framebuffer_layout = emu_window.GetFramebufferLayout();
-        const auto& screen = framebuffer_layout.screen;
-        const VkExtent2D window_extent{screen.GetWidth(), screen.GetHeight()};
-        const bool new_output_setting =
-            Settings::values.ocarina_upscale_output.GetValue() !=
-            Settings::OcarinaUpscaleOutput::Legacy;
-        const bool window_sized_output =
-            upscale_4k &&
-            (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
-             oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess) &&
-            (window_extent.width != 0 && window_extent.height != 0);
-        // The offset this frame's scene was drawn with (none when no scene draw was offset).
-        std::array<f32, 2> jitter{};
-        if (oot_jitter_frame == render_trace_frame) {
-            jitter = oot_jitter_offset;
-        }
-        const auto resolved_output =
-            Settings::OcarinaUpscaleOutputResolution(window_extent.width, window_extent.height);
-        VkExtent2D independent_output{resolved_output.width, resolved_output.height};
-        if (independent_output.width == 0 || independent_output.height == 0) {
-            independent_output = {3840, 2160};
-        }
-        const VkExtent2D output_extent =
-            native_resolution ? extent
-            : upscale_4k && new_output_setting &&
-                      (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
-                       oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess)
-                ? independent_output
-            : window_sized_output ? window_extent
-            : upscale_4k ? VkExtent2D{3840, 2160}
-                         : target_extent;
-        if (oot_allocation_failed) {
-            if (oot_failed_input_extent.width == extent.width &&
-                oot_failed_input_extent.height == extent.height &&
-                oot_failed_output_extent.width == output_extent.width &&
-                oot_failed_output_extent.height == output_extent.height) {
-                return fail("temporal allocation previously failed at this extent");
-            }
-            oot_allocation_failed = false;
-        }
         if (!oot_live_dlss) {
             oot_live_dlss = std::make_unique<OcarinaUpscaler>(
                 device, scheduler, descriptor_pool, compute_pass_descriptor_queue, memory_allocator,
                 staging_pool, *oot_backend);
-        }
-        VkExtent2D fsr_output_extent = output_extent;
-        bool fsr_ratio_clamped = false;
-        if (fsr_output_extent.width < extent.width || fsr_output_extent.height < extent.height) {
-            fsr_output_extent = extent;
-        }
-        const f64 fsr_ratio = std::max(
-            static_cast<f64>(fsr_output_extent.width) / extent.width,
-            static_cast<f64>(fsr_output_extent.height) / extent.height);
-        if (fsr_ratio > 4.0) {
-            fsr_output_extent = {static_cast<u32>(std::llround(extent.width * 4.0)),
-                                 static_cast<u32>(std::llround(extent.height * 4.0))};
-            fsr_ratio_clamped = true;
         }
         const bool xess_eligible = oot_backend != VideoCommon::OcarinaUpscaleBackend::Xess ||
             (extent.width == color.size.width && extent.height == color.size.height);
@@ -6125,7 +6124,8 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
     const Tegra::FramebufferConfig& config, DAddr framebuffer_addr, u32 pixel_stride) {
     RENDER_LEND_RESULT(AccelerateDisplay(config, framebuffer_addr, pixel_stride))
     if (oot_dlss_frame.load(std::memory_order_acquire) == render_trace_frame &&
-        oot_live_dlss && oot_live_dlss->UsedXeSS()) {
+        oot_live_dlss && (oot_live_dlss->UsedXeSS() || oot_live_dlss->XeSSFailed() ||
+                          oot_live_dlss->XeSSPending())) {
         scheduler.WaitWorker();
         oot_live_dlss->CleanupFailedXeSS();
     }
