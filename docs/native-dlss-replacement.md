@@ -54,25 +54,23 @@ shown the native program of yet (`ef542df87cacfe9e`, `4c1ae2fe58f30a97`, `c033c3
 matched by shader hash, and stop matching when the lowering of their program changes.
 
 - Max Resolution add-on off: the 3/4-scale pass (native program `6f9367bd41dc0b58`, shader
-  `e40f5efb5480e692`; also shader `ef542df87cacfe9e`, same contract) is replaced and FSR/DLSS
-  writes the game's output size (1080p to 1440p docked, 810p to 1080p handheld).
+  `e40f5efb5480e692`; also shader `ef542df87cacfe9e`, same contract) is replaced and FSR, XeSS,
+  or DLSS Super Resolution writes the game's output size (1080p to 1440p docked, 810p to 1080p
+  handheld). DLSS output is fixed at 3840x2160 only for the docked Max Resolution FullSize pass.
 - Max Resolution add-on on, docked: the full-size pass (native program `da6df3e54c716df2`,
-  shader `6bd913e1f34e83eb`) at 2560x1440 is replaced by a 3840x2160 temporal image. At 50%
-  render scale, the scene is 1280x720. The game still finishes its 1440p frame. At presentation,
-  the HUD is taken from the difference between that frame and a 1440p copy of the temporal scene,
-  then composited over the 4K scene. The 4K image skips the presentation's post-processing and
-  upscale filters.
-- Max Resolution add-on on, handheld: at the default render scale, the scene and FullSize pass
-  are 1920x1080 (1:1). An explicitly selected render scale changes both sizes; at 50%, they are
-  1280x720. The game's final pass then scales to its 2560x1440 output. FSR or XeSS replaces the
-  FullSize pass and outputs to the target extent, not the handheld window extent. Output is 1:1
-  only when the scene and target extents match; a larger target extent makes FSR upscale. DLSS
-  leaves the game's pass there (DLAA through it is untested).
-- Max Resolution add-on on, handheld: the scene renders at 1920x1080 and the same output pass
-  (native program `da6df3e54c716df2`; also shader `c033c3ddc9f0897b`) runs at 1:1, 1920x1080 to
-  1920x1080; the game's final pass then scales to its 2560x1440 output. FSR replaces it as
-  native anti-aliasing (no upscale). DLSS leaves the game's pass there (DLAA through it is
-  untested).
+  shader `6bd913e1f34e83eb`) at 2560x1440 is replaced by a temporal image. DLSS Super Resolution
+  outputs 3840x2160 (native/DLAA remains at the input extent). FSR and XeSS use the game-screen
+  window extent when the output setting is Legacy and that extent is nonzero; otherwise they use
+  `Settings::OcarinaUpscaleOutputResolution`. If the window extent is zero, they fall back to
+  3840x2160. At 50% render scale, the scene is 1280x720. The game still finishes its 1440p frame.
+  At presentation, the HUD is taken from the difference between that frame and a 1440p copy of the
+  temporal scene, then composited over the temporal output. The 4K image skips the presentation's
+  post-processing and upscale filters.
+- Max Resolution add-on on, handheld: the FullSize pass (native program `da6df3e54c716df2`; also
+  shader `c033c3ddc9f0897b`) runs at 1920x1080 with the default render scale, or 1280x720 at an
+  explicitly selected 50%. The scene and pass extents match, and the game's final pass scales to
+  its 2560x1440 output. FSR or XeSS replaces the pass at its target extent; DLSS leaves the game's
+  pass in place (DLAA through it is untested).
 - Scaled scenes: when the game's dynamic resolution shrinks the scene (handheld, down to 854x480)
   or a DLSS render scale does (docked), it upscales with the scaled passes (native programs
   `d8efd9f0c95abd80`, shader `03bf0ffc7d2d0bed`, and `e4cda162ff6009e2`, shader

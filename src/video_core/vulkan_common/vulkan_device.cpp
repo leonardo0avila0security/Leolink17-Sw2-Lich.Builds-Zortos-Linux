@@ -791,26 +791,11 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         }
     }
 
-    // Intel's Astral Chain FP16 compiler failure is retained for non-discrete devices. Discrete
-    // Arc was tested on the same Windows driver family; keep an environment override for A/B.
-    const bool is_intel_discrete =
-        is_intel_windows &&
-        properties.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
-    const bool enable_intel_discrete_fp16 =
-        is_intel_discrete && EnvFlagSet("EDEN_NX2_INTEL_DISCRETE_FP16", false);
-    if (features.shader_float16_int8.shaderFloat16 && is_intel_windows &&
-        !enable_intel_discrete_fp16) {
+    // Intel's Astral Chain FP16 compiler failure applies to the Windows driver family.
+    if (features.shader_float16_int8.shaderFloat16 && is_intel_windows) {
         LOG_WARNING(Render_Vulkan, "{}",
-                is_intel_discrete ? "Intel discrete FP16 disabled by EDEN_NX2_INTEL_DISCRETE_FP16"
-                          : "Intel non-discrete GPU FP16 disabled for the Astral Chain workaround");
+                    "Intel GPU FP16 disabled for the Astral Chain workaround");
         features.shader_float16_int8.shaderFloat16 = false;
-    }
-    if (features.shader_float16_int8.shaderFloat16 && enable_intel_discrete_fp16) {
-        LOG_INFO(Render_Vulkan,
-                 "Intel discrete GPU {} (vendor {:#06x}, device {:#06x}): enabling advertised "
-                 "FP16 arithmetic; set EDEN_NX2_INTEL_DISCRETE_FP16=1 to enable",
-                 properties.properties.deviceName, properties.properties.vendorID,
-                 properties.properties.deviceID);
     }
 
     has_broken_compute =

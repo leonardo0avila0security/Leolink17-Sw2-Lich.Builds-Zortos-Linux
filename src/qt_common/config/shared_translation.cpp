@@ -652,7 +652,10 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
           PAIR(OcarinaRenderScale, Scale100, tr("100%")),
           PAIR(OcarinaRenderScale, Scale87, tr("87%")),
           PAIR(OcarinaRenderScale, Scale75, tr("75%")),
-          PAIR(OcarinaRenderScale, Scale50, tr("50%"))}});
+          PAIR(OcarinaRenderScale, Scale625, tr("62.5%")),
+          PAIR(OcarinaRenderScale, Scale50, tr("50%")),
+          PAIR(OcarinaRenderScale, Scale375, tr("37.5%")),
+          PAIR(OcarinaRenderScale, ScaleCustom, tr("Custom"))}});
        translations->insert(
               {Settings::EnumMetadata<Settings::OcarinaRenderInput>::Index(),
                {PAIR(OcarinaRenderInput, Legacy, tr("Legacy (existing render scale)")),

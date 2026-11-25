@@ -27,6 +27,7 @@
 #include "video_core/host_shaders/ocarina_dlss_effects_base_comp_spv.h"
 #include "video_core/host_shaders/ocarina_dlss_effects_comp_spv.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
+#include "video_core/vulkan_common/xess_runtime.h"
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/renderer_vulkan/vk_streamline_dlss.h"
 #include "video_core/vulkan_common/streamline.h"
@@ -822,6 +823,23 @@ struct OcarinaUpscaler::Impl {
         return !fsr;
 #endif
     }
+
+    void CleanupFailedXeSS() {
+        if (!xess || !xess->Failed()) {
+            return;
+        }
+        xess.reset();
+        xess_color_pass.reset();
+        xess_output_pass.reset();
+        for (auto& slot : slots) {
+            if (slot) {
+                slot->xess_color_view = {};
+                slot->xess_color = {};
+            }
+        }
+        output_xess = false;
+    }
+
     VkSampler PointSampler() const {
 #ifdef EGLANTINE_STREAMLINE
         if (dlss) return dlss->PointSampler();
@@ -922,6 +940,10 @@ VkExtent2D OcarinaUpscaler::XessOutputExtent() const {
 
 bool OcarinaUpscaler::UsedXeSS() const {
     return impl->output_xess;
+}
+
+void OcarinaUpscaler::CleanupFailedXeSS() {
+    impl->CleanupFailedXeSS();
 }
 
 bool OcarinaUpscaler::RejectsInput(VkExtent2D input_size, VkExtent2D output_size) const {
@@ -1351,7 +1373,7 @@ VideoCommon::OcarinaUpscaleBackend ResolveOcarinaUpscaler(const Device& device) 
     const auto backend = VideoCommon::SelectOcarinaUpscaler(
         Settings::values.ocarina_fsr.GetValue(), Settings::values.nvidia_dlss.GetValue(),
         dlss_available, render_scaled, value ? value : "",
-        Settings::values.ocarina_xess.GetValue(), xess_available);
+        XeSS::IsRequested(), xess_available);
     if (backend == VideoCommon::OcarinaUpscaleBackend::Fsr && !Fsr3Upscaler::IsSupported(device)) {
         return VideoCommon::OcarinaUpscaleBackend::Native;
     }

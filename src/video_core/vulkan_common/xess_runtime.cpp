@@ -52,7 +52,10 @@ bool Resolve(HMODULE module, const char* name, Function& function) {
 } // namespace
 
 bool IsRequested() {
-    return Settings::values.ocarina_xess.GetValue();
+    const auto selection = Settings::values.ocarina_upscaler.GetValue();
+    return selection == Settings::OcarinaUpscaler::Xess ||
+           (selection == Settings::OcarinaUpscaler::Legacy &&
+            Settings::values.ocarina_xess.GetValue());
 }
 
 bool Start() {

@@ -52,4 +52,10 @@ void EmuWindow::UpdateCurrentFramebufferLayout(u32 width, u32 height) {
     NotifyFramebufferLayoutChanged(Layout::DefaultFrameLayout(width, height));
 }
 
+void EmuWindow::UpdateCurrentFramebufferLayout() {
+    std::scoped_lock lock{framebuffer_layout_mutex};
+    framebuffer_layout =
+        Layout::DefaultFrameLayout(framebuffer_layout.width, framebuffer_layout.height);
+}
+
 } // namespace Core::Frontend

@@ -128,6 +128,11 @@ public:
      * Convenience method to update the current frame layout
      * Read from the current settings to determine which layout to use.
      */
+    void UpdateCurrentFramebufferLayout();
+
+    /**
+     * Update the frame layout for the specified extent.
+     */
     void UpdateCurrentFramebufferLayout(u32 width, u32 height);
 
 protected:

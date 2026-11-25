@@ -5577,11 +5577,6 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
         if (!target_view || (upscale_4k && !scene_reference)) {
             return fail("no upscale target view");
         }
-        if (!oot_live_dlss) {
-            oot_live_dlss = std::make_unique<OcarinaUpscaler>(
-                device, scheduler, descriptor_pool, compute_pass_descriptor_queue, memory_allocator,
-                staging_pool, *oot_backend);
-        }
         const VkExtent2D target_extent{target.size.width, target.size.height};
         const auto framebuffer_layout = emu_window.GetFramebufferLayout();
         const auto& screen = framebuffer_layout.screen;
@@ -5603,17 +5598,31 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
             Settings::OcarinaUpscaleOutputResolution(window_extent.width, window_extent.height);
         VkExtent2D independent_output{resolved_output.width, resolved_output.height};
         if (independent_output.width == 0 || independent_output.height == 0) {
-            independent_output = target_extent;
+            independent_output = {3840, 2160};
         }
         const VkExtent2D output_extent =
             native_resolution ? extent
-            : new_output_setting &&
+            : upscale_4k && new_output_setting &&
                       (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
                        oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess)
                 ? independent_output
             : window_sized_output ? window_extent
             : upscale_4k ? VkExtent2D{3840, 2160}
                          : target_extent;
+        if (oot_allocation_failed) {
+            if (oot_failed_input_extent.width == extent.width &&
+                oot_failed_input_extent.height == extent.height &&
+                oot_failed_output_extent.width == output_extent.width &&
+                oot_failed_output_extent.height == output_extent.height) {
+                return fail("temporal allocation previously failed at this extent");
+            }
+            oot_allocation_failed = false;
+        }
+        if (!oot_live_dlss) {
+            oot_live_dlss = std::make_unique<OcarinaUpscaler>(
+                device, scheduler, descriptor_pool, compute_pass_descriptor_queue, memory_allocator,
+                staging_pool, *oot_backend);
+        }
         VkExtent2D fsr_output_extent = output_extent;
         bool fsr_ratio_clamped = false;
         if (fsr_output_extent.width < extent.width || fsr_output_extent.height < extent.height) {
@@ -5701,6 +5710,24 @@ bool RasterizerVulkan::TryOcarinaUpscale(const ComputePipeline& pipeline, u64 na
         oot_fallback_reason = nullptr;
         return true;
     } catch (const vk::Exception& error) {
+        const VkResult result = error.GetResult();
+        if (result == VK_ERROR_DEVICE_LOST) {
+            throw;
+        }
+        if ((result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY) &&
+            (oot_backend == VideoCommon::OcarinaUpscaleBackend::Fsr ||
+             oot_backend == VideoCommon::OcarinaUpscaleBackend::Xess)) {
+            scheduler.Finish();
+            oot_live_dlss.reset();
+            oot_allocation_failed = true;
+            oot_failed_input_extent = extent;
+            oot_failed_output_extent = output_extent;
+            LOG_WARNING(Render_Vulkan,
+                        "Ocarina temporal allocation failed: {}; using the guest dispatch and "
+                        "retrying after the next extent change",
+                        error.what());
+            return false;
+        }
         LOG_WARNING(Render_Vulkan, "Ocarina temporal upscaling unavailable: {}", error.what());
         oot_live_failed = true;
         texture_cache_runtime.ocarina_fsr_failed = true; // samplers drop the FSR LOD bias
@@ -6097,12 +6124,13 @@ void RasterizerVulkan::AccelerateInlineToMemory(GPUVAddr address, size_t copy_si
 std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
     const Tegra::FramebufferConfig& config, DAddr framebuffer_addr, u32 pixel_stride) {
     RENDER_LEND_RESULT(AccelerateDisplay(config, framebuffer_addr, pixel_stride))
-    if (!framebuffer_addr) {
-        return {};
-    }
     if (oot_dlss_frame.load(std::memory_order_acquire) == render_trace_frame &&
         oot_live_dlss && oot_live_dlss->UsedXeSS()) {
         scheduler.WaitWorker();
+        oot_live_dlss->CleanupFailedXeSS();
+    }
+    if (!framebuffer_addr) {
+        return {};
     }
     std::scoped_lock lock{texture_cache.mutex};
     const auto [image_view, scaled] =

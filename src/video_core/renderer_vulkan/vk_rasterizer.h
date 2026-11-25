@@ -458,6 +458,9 @@ private:
     } oot_motion;
     std::unique_ptr<class OcarinaUpscaler> oot_live_dlss;
     bool oot_live_failed{};
+    bool oot_allocation_failed{};
+    VkExtent2D oot_failed_input_extent{};
+    VkExtent2D oot_failed_output_extent{};
     const char* oot_fallback_reason{};
     u32 oot_fallback_repeats{};
     std::atomic<u64> oot_dlss_frame{~u64{0}};
