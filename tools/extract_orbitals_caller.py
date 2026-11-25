@@ -100,6 +100,27 @@ with DMP.open("rb") as f:
             lines.append(f"RSI+0x{off:03X} = {q:#018x}")
     else:
         lines.append("<0x200 bytes at RSI not fully captured in one memory range>")
+    # Follow the four fields used by the caller's address calculation.
+    lines += ["","CALLER INPUT FIELDS AND POINTED MEMORY:"]
+    if desc:
+        for off in (0xC8,0xD0,0xD8,0xE0):
+            value=struct.unpack_from("<Q",desc,off)[0]
+            hit=next(((a,n,fo) for a,n,fo in rs if a<=value<a+n),None)
+            lines.append(f"RSI+0x{off:03X} = {value:#018x}")
+            if hit:
+                a,n,fo=hit
+                lines.append(f"  mapped in dump range [{a:#x},{a+n:#x}), available={a+n-value:#x}")
+                blob=readva(f,rs,value,min(0x100,a+n-value))
+                if blob:
+                    for j in range(0,len(blob),16):
+                        lines.append(f"  {value+j:016X}: {blob[j:j+16].hex(' ')}")
+            else:
+                lines.append("  NOT CAPTURED as a direct virtual-memory range")
+    lines += ["","DESCRIPTOR SOURCE BYTES AS 16-BIT WORDS:"]
+    if desc:
+        src=struct.unpack_from("<Q",desc,8)[0]
+        lines.append("source qword = "+src.to_bytes(8,"little").hex(" "))
+        lines.append("u16 words = "+", ".join(f"{x:#06x}" for x in struct.unpack("<4H",src.to_bytes(8,"little"))))
     lines += ["","DISASSEMBLY AROUND RIP:"]+disasm(md,readva(f,rs,max(0,rip-0x40),0x200),max(0,rip-0x40),100)
     (OUT/"exception_context.txt").write_text("\n".join(lines),encoding="utf-8")
     print("\n".join(lines[-180:]))
