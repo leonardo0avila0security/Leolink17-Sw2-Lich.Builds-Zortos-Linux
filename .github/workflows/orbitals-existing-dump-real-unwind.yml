@@ -1,0 +1,43 @@
+name: orbitals-existing-dump-real-unwind
+on:
+  push:
+    branches:
+      - analysis/recomp-build
+    paths:
+      - "tools/nx2/unwind_orbitals_minidump_x64.py"
+      - ".github/workflows/orbitals-existing-dump-real-unwind.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unwind-existing-dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the existing dump from analysis-data
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors \
+            --output dump.zip \
+            "https://github.com/sinedgiveaways/tool/releases/download/analysis-data/orbitals-recomp.exe.16952.dmp.zip"
+          echo "1046109831d1fa9451e3d8a047bbb07fd286a289c12035bebaf786f7b51f7dbd  dump.zip" | sha256sum --check
+          unzip -Z1 dump.zip
+          mkdir extracted
+          unzip -q dump.zip -d extracted
+          DUMP="$(find extracted -type f -iname '*.dmp' -print -quit)"
+          test -n "$DUMP"
+          echo "DUMP=$DUMP" >> "$GITHUB_ENV"
+          ls -lh "$DUMP"
+          df -h .
+      - name: Unwind exception thread with the exact PE runtime metadata
+        run: |
+          python tools/nx2/unwind_orbitals_minidump_x64.py "$DUMP" --depth 40 --out unwind-report.txt
+          cat unwind-report.txt
+      - name: Upload unwind report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: orbitals-existing-dump-real-unwind
+          path: unwind-report.txt
+          if-no-files-found: warn
+          retention-days: 30
