@@ -2775,6 +2775,11 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     emulation_running = true;
     if (ui->action_Fullscreen->isChecked()) {
         ShowFullscreen();
+    } else if (UISettings::values.keep_window_size_on_boot.GetValue()) {
+        // A separate game window opens at the size of the main window.
+        if (!ui->action_Single_Window_Mode->isChecked() && !render_window->isMaximized()) {
+            render_window->resize(size());
+        }
     } else if (!(ui->action_Single_Window_Mode->isChecked() ? isMaximized()
                                                             : render_window->isMaximized())) {
         if (Settings::IsDockedMode()) {
