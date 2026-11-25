@@ -806,10 +806,7 @@ bool XessUpscaler::Upscale(const Inputs& inputs) {
          state.allocation_output_size.width != inputs.output_size.width ||
          state.allocation_output_size.height != inputs.output_size.height);
     if (output_changed || scheduled_pair_changed || allocation_pair_changed) {
-        if (state.output_size.width != 0 || state.context || initialization_scheduled ||
-            allocation_pending) {
-            state.DestroyContext();
-        }
+        state.DestroyContext();
         if (output_changed) {
             state.output_view = {};
             state.output_image = {};
@@ -904,6 +901,18 @@ bool XessUpscaler::Upscale(const Inputs& inputs) {
             return false;
         }
         if (!state.initialization_scheduled.exchange(true, std::memory_order_acq_rel)) {
+            const bool worker_ready = state.ready.load(std::memory_order_acquire);
+            const bool worker_allocation_pending =
+                state.allocation_pending.load(std::memory_order_acquire);
+            const bool worker_rejected_dimensions =
+                state.rejected_input_size.width == inputs.render_size.width &&
+                state.rejected_input_size.height == inputs.render_size.height &&
+                state.rejected_output_size.width == inputs.output_size.width &&
+                state.rejected_output_size.height == inputs.output_size.height;
+            if (worker_ready || worker_allocation_pending || worker_rejected_dimensions) {
+                state.initialization_scheduled.store(false, std::memory_order_release);
+                return worker_ready ? state.Execute(inputs) : false;
+            }
             state.initialization_input_size = inputs.render_size;
             state.initialization_output_size = inputs.output_size;
             state.scheduler.Record([&state, input_size = inputs.render_size,

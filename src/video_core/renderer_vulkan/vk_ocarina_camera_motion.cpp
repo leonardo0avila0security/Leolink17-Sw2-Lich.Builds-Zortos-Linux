@@ -810,6 +810,7 @@ struct OcarinaUpscaler::Impl {
     /// which didn't evaluate it.
     bool output_fsr4{};
     bool output_xess{};
+    bool fsr_history_reset_pending{};
     std::optional<std::chrono::steady_clock::time_point> last_evaluation;
 
     bool UsesFsr4() const {
@@ -838,6 +839,7 @@ struct OcarinaUpscaler::Impl {
             }
         }
         output_xess = false;
+        fsr_history_reset_pending = true;
     }
 
     VkSampler PointSampler() const {
@@ -1295,7 +1297,9 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
         const f32 sharpness = FSR::RcasSharpnessFromStops(
             static_cast<f32>(Settings::values.fsr_sharpening_slider.GetValue()) / 100.0f);
         // Taking over from FSR 4 or XeSS: FSR 3.1 has no history of those frames.
-        const bool fsr_reset = reset || elapsed > 250.0f || state.output_fsr4 || state.output_xess;
+        const bool fsr_reset =
+            reset || elapsed > 250.0f || state.output_fsr4 || state.output_xess ||
+            state.fsr_history_reset_pending;
         state.fsr->Upscale({
             .color = *resources.color_view,
             .depth = depth,
@@ -1312,6 +1316,7 @@ bool OcarinaUpscaler::Record(VkImageView color, VkImageView depth, VkImageView t
             .transparency_mask = bias_view,
             .vertical_fov = 2.0f * std::atan(1.0f / projection_y),
         });
+        state.fsr_history_reset_pending = false;
         state.last_evaluation = now;
         static const bool trace = std::getenv("EDEN_NX2_DLSS_CONTRACT_TRACE") != nullptr;
         if (trace || frame % 120 == 0 || fsr_reset) {
@@ -1348,6 +1353,10 @@ VideoCommon::OcarinaUpscaleBackend ResolveOcarinaUpscaler(const Device& device) 
     const char* value = std::getenv("EDEN_NX2_DLSS_REPLACEMENT");
     if (value && std::string_view(value) == "native") {
         return VideoCommon::OcarinaUpscaleBackend::Native;
+    }
+    if (value && std::string_view(value) == "fsr") {
+        return Fsr3Upscaler::IsSupported(device) ? VideoCommon::OcarinaUpscaleBackend::Fsr
+                                                 : VideoCommon::OcarinaUpscaleBackend::Native;
     }
     switch (Settings::values.ocarina_upscaler.GetValue()) {
     case Settings::OcarinaUpscaler::Off:
