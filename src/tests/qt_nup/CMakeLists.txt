@@ -7,6 +7,12 @@ add_executable(nup_dialog_tests
     ../../lichii/nup_dialogs.h
     ../../lichii/util/icon_search.cpp
     ../../lichii/util/icon_search.h
+    ../../lichii/spotlight/dialog.cpp
+    ../../lichii/spotlight/menu.cpp
+    ../../lichii/spotlight/notice.cpp
+    ../../lichii/spotlight/theme.cpp
+    ../../lichii/spotlight/widgets.cpp
+    ../../../dist/qt_themes/lichii/spotlight.qrc
 )
 target_include_directories(nup_dialog_tests PRIVATE ../..)
 target_link_libraries(nup_dialog_tests PRIVATE

@@ -58,7 +58,8 @@ void NupDialogTest::renamePreservesBuildIds() {
     QCOMPARE(update_id.size(), 40);
     QVERIFY(base_id != update_id);
 
-    NupEditDialog dialog(archive);
+    ArchiveEditDialog dialog(ArchiveEditDialog::Format::Nup, archive,
+                             FileSys::Nup::ProbeNupMetadata(archive));
     auto* name = dialog.findChild<QLineEdit*>(QStringLiteral("nupEditName"));
     QVERIFY(name);
     QTest::keyClicks(name, QStringLiteral("Edited title"));
@@ -95,7 +96,8 @@ void NupDialogTest::publisherEdits() {
     const auto archive = std::filesystem::path(path.toStdU16String());
     QCOMPARE(ReadRecord(fixture, 0, 0x0006).size(), 40);
 
-    NupEditDialog dialog(archive);
+    ArchiveEditDialog dialog(ArchiveEditDialog::Format::Nup, archive,
+                             FileSys::Nup::ProbeNupMetadata(archive));
     auto* publisher = dialog.findChild<QLineEdit*>(QStringLiteral("nupEditPublisher"));
     QVERIFY(publisher);
     publisher->selectAll();
